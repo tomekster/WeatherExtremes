@@ -1,0 +1,9 @@
+cartopy
+netCDF4
+numpy
+pandas
+xarray
+cdo
+netCDF4
+scipy
+python-dotenv
