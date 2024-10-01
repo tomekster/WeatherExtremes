@@ -1,0 +1,6 @@
+.venv
+.env
+scratchpad.py
+__pycache__
+output/*
+t2mean/*
