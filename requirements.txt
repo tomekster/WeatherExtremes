@@ -4,6 +4,8 @@ numpy
 pandas
 xarray
 cdo
-netCDF4
 scipy
 python-dotenv
+zarr
+gcsfs
+dask
