@@ -2,46 +2,45 @@ from datetime import timedelta
 
 import cftime
 import numpy as np
-import xarray as xr
 
 from dataloader import ZarrLoader
 from enums import AGG
 import timeit
+from vis import plot_and_save_arrays
+from tqdm import tqdm
+from zarrmanager import ZarrManager
 
 PARAMS = {
     # 'var': '2m_temperature',
     'var': 'daily_mean_2m_temperature',
-    
-    # We make no assumptions about analysis and reference period overlap. Can overlap or be disjoint
-    'analysis_period': (cftime.DatetimeNoLeap(1960, 1, 1), cftime.DatetimeNoLeap(1965, 1, 1)),
-    'reference_period': (cftime.DatetimeNoLeap(1965, 1, 1), cftime.DatetimeNoLeap(1970, 1, 1)),
-    # 'analysis_period': (datetime(1960, 1, 1), datetime(1962, 1, 1)),
-    # 'reference_period': (datetime(1960, 1, 1), datetime(1961, 1, 1)),
-    'aggregation': AGG.SUM,
-    'aggregation_window': 4,
+    'reference_period': (cftime.DatetimeNoLeap(1960, 1, 1), cftime.DatetimeNoLeap(1965, 12, 31)), # NOTE: For correctness this ref-period has to start on Jan 1st and end on Dec 31st
+    'analysis_period': (cftime.DatetimeNoLeap(1966, 1, 1), cftime.DatetimeNoLeap(1966, 12, 31)),
+    'aggregation': AGG.MAX,
+    'aggregation_window': 5,
     'perc_boosting_window': 5,
     'percentile': 0.99,
 }
 
 def main(params):
     print("Loading Data...")
-    dl = ZarrLoader('data/daily_mean_2m_temperature.zarr')
+    dl = ZarrLoader('data/daily_mean_2m_temperature_1959_1980.zarr')
 
     data = dl.load()
     data = data.convert_calendar('noleap')
 
-    an_start, an_end = params['analysis_period']
     ref_start, ref_end = params['reference_period']
+    an_start, an_end = params['analysis_period']
+    n_years = ref_end.year - ref_start.year + 1
 
-    boosting_prefix = timedelta(days=params['aggregation_window'])
-    half_boosting = timedelta(days=params['perc_boosting_window'] // 2)
+    half_agg_window = timedelta(days=params['aggregation_window']//2)
+    half_perc_boost_window = timedelta(days=params['perc_boosting_window']//2)
+    
+    agg_start = ref_start - (half_agg_window + half_perc_boost_window)
+    agg_end = ref_end + (half_agg_window + half_perc_boost_window)
 
-    agg_start = min(ref_start - boosting_prefix - half_boosting, an_start - boosting_prefix + -half_boosting) 
-    agg_end = max(ref_end + half_boosting, an_end + half_boosting)
-
-    print("Aggregating...")
-    data = data[params['var']].sel(time=slice(agg_start, agg_end)) 
-    rolling_data = data.rolling(time=params['aggregation_window'], center=False)
+    print("Calculating Aggregations...")
+    data = data[params['var']].sel(time=slice(agg_start, agg_end))
+    rolling_data = data.rolling(time=params['aggregation_window'], center=True)
 
     if params['aggregation'] == AGG.MEAN:
         aggregated_data = rolling_data.mean()
@@ -50,44 +49,91 @@ def main(params):
     elif params['aggregation'] == AGG.MIN:
         aggregated_data = rolling_data.min()
     elif params['aggregation'] == AGG.MAX:
-        aggregated_data = rolling_data.MAX()
+        aggregated_data = rolling_data.max()
     else:
         raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", params['aggregation'])
 
-    day_of_year = aggregated_data.time.dt.dayofyear
+    reference_period_aggregations = aggregated_data.sel(time=slice(ref_start - half_agg_window, ref_end + half_agg_window))
+    
+    half_perc_boost = params['perc_boosting_window'] // 2
+    
+    # 1st Jan = 1 and 31st Dec = 31
+    # For calulating percentile boosting we need to prepend the days from the end of the year and append the days from the beginning of the year
+    prefix_len = -(ref_start.dayofyr - half_perc_boost - 1) # How many groups from the end should be prepended
+    suffix_len = ref_end.dayofyr + half_perc_boost - 365 # How many groups from the beginning should be appended
+    
+    zm = ZarrManager(params)
+    doy_grouped = reference_period_aggregations.groupby('time.dayofyear')
+    
+    # Process prefixes
+    print("Processing the prefix...")
+    for doy, group in tqdm(list(doy_grouped)[-prefix_len:]):
+        group = group.to_numpy()
+        zm.add(group[:-1])
+            
+    # Process main
+    print("Processing the days of the year...")
+    for i, (doy, group) in tqdm(enumerate(doy_grouped)):
+        group = group.to_numpy()
+        if i < suffix_len:
+            group = group[:-1]
+        elif i >= len(doy_grouped) - prefix_len:
+            group = group[1:]
+        zm.add(group)
+    
+    #Process suffixes
+    print("Processing the suffix...")
+    for doy, group in tqdm(list(doy_grouped)[:suffix_len]):
+        group = group.to_numpy()
+        zm.add(group[1:])
 
-    print("Calculating Percentiles...")
-    percentiles = []
-    # For every unique day of a year
-    for day in np.unique(day_of_year):
-        print("Day: ", day)
-        # Define the boosting window
-        start_day = (day - params['perc_boosting_window']//2 + 365) % 365
-        end_day = (day + params['perc_boosting_window']//2) % 365
-        
-        # Account for the fact that we might need data from two consecutive years if (start date > end date)
-        if start_day <= end_day:
-            selected_data = data.sel(time=(day_of_year >= start_day) & (day_of_year <= end_day))
-        else:
-            selection1 = data.sel(time=(day_of_year >= start_day))
-            selection2 = data.sel(time=(day_of_year <= end_day))
-            selected_data = xr.concat([selection1, selection2], dim="time")
+    # Store remaining
+    if zm.elements_list:
+        zm.store()
 
-        selected_data = selected_data.chunk({'time': -1})
-        percentile = selected_data.quantile(params['percentile'])
-        percentiles.append(percentile.compute().item())
-    print("Precentiles calculated!")
-    print(percentiles)
+    perc_boost = params['perc_boosting_window']
+    
+    percentile_parts = []
+    
+    # To reduce the memory footprint and enable easy parallelization we will calculate the percentiles band, by band
+    # Since the original weather state array is 771 x 1440, we will split the first dimension into bands 
+    dim = 771
+    step = 260
+    steps = list(range(0, dim, step))
+    if steps[-1] < dim:
+        steps.append(dim)
+    
+    for band in zip(steps, steps[1:]):
+        combined = []
+        print(f"Retrieving the band {band}...")
+        for i in tqdm(range(zm.num_arrays)):
+            subarray = zm.zarr_store[f'array_{i}'][:,band[0]:band[1],:]
+            combined.append(subarray)
+        combined_groups = np.concat(combined)
 
-    percentiles = np.array(percentiles)
-
-    print("Calculating Mask...")
-    an_agg_data = aggregated_data.sel(time=slice(an_start, an_end))
-    doy = an_agg_data.time.dt.dayofyear
-    percentile_array = xr.DataArray(percentiles, dims=["dayofyear"],  coords={"dayofyear": np.arange(1, len(percentiles) + 1)})
-    percentile_for_time = percentile_array.sel(dayofyear=doy)
-    binary_mask = an_agg_data > percentile_for_time
-    print(binary_mask)
+        percentiles = []
+        print(f"Calculating percentiles for the band...")
+        for doy in tqdm(range(365)):
+            percentile =np.quantile(combined_groups[n_years * doy: (perc_boost + doy) * n_years], 0.9, axis=0) 
+            percentiles.append(percentile)
+    
+        percentiles = np.stack(percentiles)
+        print("Precentiles calculated!")
+        percentile_parts.append(percentiles)
+    
+    
+    images = [np.vstack([percentile_parts[i][k] for i in range(3)]) for k in [30, 120, 210, 300]]
+    plot_and_save_arrays(*images, filename='arrays_plot.png')
+    
+    
+    
+    # print("Calculating Mask...")
+    # an_agg_data = aggregated_data.sel(time=slice(an_start, an_end))
+    # doy = an_agg_data.time.dt.dayofyear
+    # percentile_array = xr.DataArray(percentiles, dims=["dayofyear"],  coords={"dayofyear": np.arange(1, len(percentiles) + 1)})
+    # percentile_for_time = percentile_array.sel(dayofyear=doy)
+    # binary_mask = an_agg_data > percentile_for_time
+    # print(binary_mask)
 
 
 if __name__ == '__main__':
