@@ -6,7 +6,6 @@ import numpy as np
 from dataloader import ZarrLoader
 from enums import AGG
 import timeit
-from vis import plot_and_save_arrays
 from tqdm import tqdm
 from zarrmanager import ZarrManager
 
@@ -22,12 +21,7 @@ PARAMS = {
 }
 
 def main(params):
-    print("Loading Data...")
-    dl = ZarrLoader('data/daily_mean_2m_temperature_1959_1980.zarr')
-
-    data = dl.load()
-    data = data.convert_calendar('noleap')
-
+    # Set dates
     ref_start, ref_end = params['reference_period']
     an_start, an_end = params['analysis_period']
     n_years = ref_end.year - ref_start.year + 1
@@ -37,6 +31,21 @@ def main(params):
     
     agg_start = ref_start - (half_agg_window + half_perc_boost_window)
     agg_end = ref_end + (half_agg_window + half_perc_boost_window)
+    
+    print("Loading Data...")
+    # dl = ZarrLoader('data/daily_mean_2m_temperature_1959_1980.zarr')
+    
+    # dl = GCSDataLoader()
+    # data = dl.load_weatherbench()
+    
+    # print("Temp2m daily mean from weatherbench")
+    # print(data[params['var']].sel(time=slice('1962-08-30', '1962-09-03')).to_numpy()[:,0,:3])
+    
+    dl = ZarrLoader('data/michaels_t2_mean_as_zarr_1964-12-01_1971-02-01.zarr')
+    data = dl.load()
+    
+    print("Converting to no-leap calendar")
+    data = data.convert_calendar('noleap')
 
     print("Calculating Aggregations...")
     data = data[params['var']].sel(time=slice(agg_start, agg_end))
@@ -54,7 +63,7 @@ def main(params):
         raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", params['aggregation'])
 
     reference_period_aggregations = aggregated_data.sel(time=slice(ref_start - half_agg_window, ref_end + half_agg_window))
-    
+
     half_perc_boost = params['perc_boosting_window'] // 2
     
     # 1st Jan = 1 and 31st Dec = 31
@@ -114,16 +123,17 @@ def main(params):
         percentiles = []
         print(f"Calculating percentiles for the band...")
         for doy in tqdm(range(365)):
-            percentile =np.quantile(combined_groups[n_years * doy: (perc_boost + doy) * n_years], 0.9, axis=0) 
+            percentile =np.quantile(combined_groups[n_years * doy: (perc_boost + doy) * n_years], params['percentile'], axis=0) 
             percentiles.append(percentile)
     
         percentiles = np.stack(percentiles)
         print("Precentiles calculated!")
         percentile_parts.append(percentiles)
     
+    images = [np.vstack([percentile_parts[i][k] for i in range(3)]) for k in [243, 244]]
+    # plot_and_save_arrays(*images, filename='arrays_plot.png')
     
-    images = [np.vstack([percentile_parts[i][k] for i in range(3)]) for k in [30, 120, 210, 300]]
-    plot_and_save_arrays(*images, filename='arrays_plot.png')
+    return reference_period_aggregations, images[0], images[1]
     
     
     
