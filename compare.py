@@ -78,16 +78,25 @@ def compare_agg():
     print(data_tomasz)
 
 def compare_percentile():
+    # PARAMS = {
+    #     'var': 'daily_mean_2m_temperature',
+    #     'reference_period': (cftime.DatetimeNoLeap(1965, 1, 1), cftime.DatetimeNoLeap(1970, 12, 31)), # NOTE: For correctness this ref-period has to start on Jan 1st and end on Dec 31st
+    #     'analysis_period': (cftime.DatetimeNoLeap(1966, 1, 1), cftime.DatetimeNoLeap(1966, 12, 31)),
+    #     'aggregation': AGG.MAX,
+    #     'aggregation_window': 5,
+    #     'perc_boosting_window': 5,
+    #     'percentile': 0.99,
+    # }
     PARAMS = {
         'var': 'daily_mean_2m_temperature',
-        'reference_period': (cftime.DatetimeNoLeap(1965, 1, 1), cftime.DatetimeNoLeap(1970, 12, 31)), # NOTE: For correctness this ref-period has to start on Jan 1st and end on Dec 31st
+        'reference_period': (cftime.DatetimeNoLeap(1965, 1, 1), cftime.DatetimeNoLeap(1965, 12, 31)), # NOTE: For correctness this ref-period has to start on Jan 1st and end on Dec 31st
         'analysis_period': (cftime.DatetimeNoLeap(1966, 1, 1), cftime.DatetimeNoLeap(1966, 12, 31)),
         'aggregation': AGG.MAX,
-        'aggregation_window': 5,
-        'perc_boosting_window': 5,
+        'aggregation_window': 1,
+        'perc_boosting_window': 3,
         'percentile': 0.99,
     }
-    reference_period_agg, perc243, perc244 = main(PARAMS)
+    reference_period_agg, combined_groups, perc243, perc244 = main(PARAMS)
     
     print("Sven's percentile in T2MEAN-PERC-09-01")
     file_path = 'data/comparison_with_sven/T2MEAN-PERC-09-01'
@@ -106,8 +115,16 @@ def compare_percentile():
     print(perc244)
     print(perc244.shape)
     
-    np.save('perc243.np', perc243)
-    np.save('perc244.np', perc244)
+    # np.save('perc243.np', perc243)
+    # np.save('perc244.np', perc244)
+    
+    print("Combined_groups")
+    print(combined_groups.shape)
+    print(combined_groups[:,:3,:3])
     
 # convert_michaels_data_to_zarr()
+# compare_percentile()
+sven_data_field = np.load('sven_data_field_before_percentile_year_1965_agg_1_percboost_3_perc99.np.npy')
+print(sven_data_field.shape)
+print(sven_data_field[:,:3,:3])
 compare_percentile()
