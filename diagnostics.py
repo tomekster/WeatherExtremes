@@ -52,31 +52,31 @@ fieldname = 't2m'
 unit = 'K'
 
 # set paths
-input_dir = '/net/thermo/atmosdyn/michaesp/era5.frequency.of.extremes/era5.daily/t2mean/'
-output_dir = '/net/litho/atmosdyn2/svoigt/project_extremes/temp/measure_time/'
+input_dir = '/home/tsternal/WeatherExtremes/data/michael_t2_mean/'
+output_dir = '/home/tsternal/WeatherExtremes/data/compare_output/'
 
 # prefix of data files
 prefix = 'T2MEAN'
 
 # Number of aggregation/consecutive days (0 corresponds to single day), 1 to 3 days(day before, current day, and day after)
-ndays = 2
+ndays = 0
 
 # Aggregation mode (mean|median|min|max|test)
 aggmode = 'max'
 
 # Start and end of analysis period (year, month)
-y_0 = 1960; m_0 = 1
-y_1 = 1965; m_1 = 1 
+y_0 = 1966; m_0 = 1
+y_1 = 1966; m_1 = 1 
 
 # Start and end of reference period
 ref_y0 = 1965
-ref_y1 = 1970
+ref_y1 = 1965
 
 # Percentile for extreme-event identification
 perc = 99
 
 # Timewindow (in days) for percentile boosting
-timewin = 2
+timewin = 1
 
 # Set months for analysis
 analysis_months = [9]
@@ -370,6 +370,7 @@ if calcmode == 'percentile' or calcmode == 'compute':
             # subtract seasonaliy field from data_field
             data_field -= seasonality_field[dd-1,:,:]
             '''
+            np.save("sven_data_field_before_percentile_year_1965_agg_1_percboost_3_perc99.np", data_field)
             if with_seasonality:
                 # calculate percentiles for this day and add seasonality field
                 perc_field[dd-1,:,:] = np.percentile(data_field, perc, axis=0) + seasonality_field[dd-1,:,:]
