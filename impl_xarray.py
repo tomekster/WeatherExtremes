@@ -62,7 +62,7 @@ def main(params):
     else:
         raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", params['aggregation'])
 
-    reference_period_aggregations = aggregated_data.sel(time=slice(ref_start - half_agg_window, ref_end + half_agg_window))
+    reference_period_aggregations = aggregated_data.sel(time=slice(ref_start - half_perc_boost_window, ref_end + half_perc_boost_window))
 
     half_perc_boost = params['perc_boosting_window'] // 2
     
@@ -75,7 +75,7 @@ def main(params):
     doy_grouped = reference_period_aggregations.groupby('time.dayofyear')
     
     # Process prefixes
-    print("Processing the prefix...")
+    print(f"Processing the prefix ({prefix_len})...")
     for doy, group in tqdm(list(doy_grouped)[-prefix_len:]):
         group = group.to_numpy()
         zm.add(group[:-1])
@@ -91,7 +91,7 @@ def main(params):
         zm.add(group)
     
     #Process suffixes
-    print("Processing the suffix...")
+    print(f"Processing the suffix ({suffix_len})...")
     for doy, group in tqdm(list(doy_grouped)[:suffix_len]):
         group = group.to_numpy()
         zm.add(group[1:])
@@ -105,14 +105,16 @@ def main(params):
     percentile_parts = []
     
     # To reduce the memory footprint and enable easy parallelization we will calculate the percentiles band, by band
-    # Since the original weather state array is 771 x 1440, we will split the first dimension into bands 
-    dim = 771
-    step = 260
+    # Since the original weather state array is 721 x 1440, we will split the first dimension into bands 
+    dim = 721
+    # step = 241
+    step=721
     steps = list(range(0, dim, step))
     if steps[-1] < dim:
         steps.append(dim)
     
-    for band in zip(steps, steps[1:]):
+    bands = list(zip(steps, steps[1:]))
+    for band in bands:
         combined = []
         print(f"Retrieving the band {band}...")
         for i in tqdm(range(zm.num_arrays)):
@@ -127,13 +129,13 @@ def main(params):
             percentiles.append(percentile)
     
         percentiles = np.stack(percentiles)
-        print("Precentiles calculated!")
+        print("Percentiles calculated!")
         percentile_parts.append(percentiles)
     
-    images = [np.vstack([percentile_parts[i][k] for i in range(3)]) for k in [243, 244]]
+    images = [np.vstack([percentile_parts[i][k] for i in range(len(bands))]) for k in [243, 244]]
     # plot_and_save_arrays(*images, filename='arrays_plot.png')
     
-    return reference_period_aggregations, images[0], images[1]
+    return reference_period_aggregations, combined_groups, images[0], images[1]
     
     
     
