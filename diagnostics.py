@@ -370,7 +370,7 @@ if calcmode == 'percentile' or calcmode == 'compute':
             # subtract seasonaliy field from data_field
             data_field -= seasonality_field[dd-1,:,:]
             '''
-            np.save("sven_data_field_before_percentile_year_1965_agg_1_percboost_3_perc99.np", data_field)
+            np.save(f"sven_percentiles/day_{dd-1}_sven_data_field_before_percentile_year_1965_agg_1_percboost_3_perc99.np", data_field)
             if with_seasonality:
                 # calculate percentiles for this day and add seasonality field
                 perc_field[dd-1,:,:] = np.percentile(data_field, perc, axis=0) + seasonality_field[dd-1,:,:]
