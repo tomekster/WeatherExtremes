@@ -2,9 +2,7 @@ import numpy as np
 import zarr
 
 
-class ZarrManager:
-    # TODO: Replace this method entirely by a custom zarr sotrage mananger class
-    
+class ZarrManager:    
     def __init__(self, params):
         ref_start, ref_end = params['reference_period']
         self.path = f"{params['var']}_{ref_start}_{ref_end}_{str(params['aggregation'])}_aggrwindow_{params['aggregation_window']}_percboost_{params['perc_boosting_window']}_perc_{params['percentile']}.zarr"
