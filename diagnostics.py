@@ -8,37 +8,20 @@
 #%%
 import numpy as np
 import datetime as dt
-import matplotlib.pyplot as plt
-import cartopy as cart
-import matplotlib.patches as mpatches
-import cartopy.crs as ccrs
-import matplotlib.ticker as mticker
-from matplotlib import colors
-from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import xarray as xr
 import time
 import pandas as pd
-import cftime
-import math
-import netCDF4 as nc
 from netCDF4 import Dataset
 from cdo import *
 cdo = Cdo()
-from scipy.spatial import cKDTree
 import calendar
 from tqdm import tqdm
-
-import os,sys,re,fnmatch,datetime
 
 import warnings
 warnings.filterwarnings('ignore')
 
 #%%
-
-# take time at the start
 time_start = time.time()
-
-
 #%%
 # -----------------------------------------
 # set parameters and variables
@@ -72,26 +55,19 @@ def run_direct(
     """
     args:
         calcmode: Calculation mode (aggregate | seasonality | percentile | event | climatology | trend | test); compute = aggregate + seasonality + percentile + event + climatology
+        
         with_seasonality (boolean): if we should calculate the seasonality
         
-        # choose meteorological field
-        fieldname = 't2m'
-        unit = 'K'
+        fieldname (str): the name of the meteorological field (for example 't2m')
+        unit (str): the unit of the meteorological field (for example 'K')
         
-        # set paths
-        input_dir = '/home/tsternal/WeatherExtremes/data/michael_t2_mean/'
-        output_dir = '/home/tsternal/WeatherExtremes/data/compare_output/'
+        input_dir (str): path to the directory with .nc files 
+        output_dir (str): path to the directory in which intermediate files and outputs should be stored
+        prefix (str): prefix of data files (for example 'T2MEAN')
+        ndays (int): num of consecutive aggregation days. 0 corresponds to single day, 1 corresponds to 3 days(day before, current day, and day after)
+        aggmode (str): aggregation mode (mean|median|min|max|test)
         
-        # prefix of data files
-        prefix = 'T2MEAN'
-        
-        # Number of aggregation/consecutive days (0 corresponds to single day), 1 to 3 days(day before, current day, and day after)
-        ndays = 0
-        
-        # Aggregation mode (mean|median|min|max|test)
-        aggmode = 'max'
-        
-        # Start and end of analysis period (year, month)
+        # Start and end of analysis period (year, month [1-12])
         y_0 = 1966; m_0 = 1
         y_1 = 1966; m_1 = 1
         
@@ -101,10 +77,8 @@ def run_direct(
         
         perc (int): Percentile for extreme-event identification
         
-        timewin (int): Timewindow (in days) for percentile boosting. Timewindow is added on both left and right side of the calculated day of year
-        
-        # Set months for analysis
-        analysis_months = [9]
+        timewin (int): number of days for percentile boosting. Timewindow is added on both left and right side of the calculated day of year
+        analysis_months (list[int]): months for which the analysis is conducted (for example [9] for Sep)
         
         # set period for seasonality calculation
         seasonality_y0 = 1960
@@ -114,12 +88,10 @@ def run_direct(
         nlon = 1440
         nlat = 721
         
-        save_datafields (boolean): save datafields for testing
+        save_datafields (boolean): save datafields (the array of vlaues for which percentiles are computed) for testing
     """
 
     #%%
-    # functions
-
     # read netCDF file
     def ncread(file, fieldname):
         with Dataset(file, 'r') as ncfile:
@@ -231,9 +203,6 @@ def run_direct(
             curr_year = next_year
             curr_month = next_month
             curr_field = next_field
-
-
-
 
     #%%
 
@@ -409,13 +378,6 @@ def run_direct(
             outpath = output_dir + f'{prefix}-PERC-{mm:02d}'
             description = str(perc) + 'th percentile of ' + fieldname +' for reference period ' + str(ref_y0) + '-' + str(ref_y1)
             ncwrite(outpath,perc_field,dt.datetime(ref_y0,1,1),fieldname,description,unit)
-
-
-
-                    
-
-
-
     #%%
 
     if calcmode == 'event' or calcmode == 'compute':
@@ -456,12 +418,8 @@ def run_direct(
 
 
     #%%
-
-    # take time at the end
     time_end = time.time()
-
     print(str(np.round(time_end-time_start))+'s')
-
     #%%
 
     if calcmode == 'climatology' or calcmode == 'compute':
@@ -488,12 +446,7 @@ def run_direct(
             outpath = output_dir + f'{prefix}-CLIMATOLOGY-{month_str}_{y_0}-{y_1}'
             description = 'Number of ' + fieldname + '-extreme events from '+str(y_0)+' to '+str(y_1)
             ncwrite(outpath,event_counts,dt.datetime(y_0,month,1),fieldname,description,'')
-
-
-
     #%%
-
-# take time after climatology
 time_end = time.time()
 
 print(str(np.round(time_end-time_start))+'s')
