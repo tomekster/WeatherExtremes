@@ -4,6 +4,7 @@ import os
 import re
 import netCDF4
 import cftime
+from enums import DAYS_PER_MONTH
 
 class GCSDataLoader:
 
@@ -101,13 +102,12 @@ class MichaelDataloader:
                 year = int(match.group(1))
                 month = int(match.group(2))
 
-                days_per_month = [31,28,31,30,31,30,31,31,30,31,30,31]
                 # Construct the full file path
                 file_path = os.path.join(directory, file_name)
 
                 # Convert the year and month into a timestamp to check if it's within the date range
                 file_date1 = cftime.DatetimeGregorian.strptime(f"{year}-{month:02d}-01", "%Y-%m-%d") 
-                file_date2 = cftime.DatetimeGregorian.strptime(f"{year}-{month:02d}-{days_per_month[month-1]:02d}", "%Y-%m-%d") 
+                file_date2 = cftime.DatetimeGregorian.strptime(f"{year}-{month:02d}-{DAYS_PER_MONTH[month-1]:02d}", "%Y-%m-%d") 
                 if (start_timestamp <= file_date1 <= end_timestamp) or (start_timestamp <= file_date2 <= end_timestamp):
                     print(file_name)
                     # Read the netCDF file

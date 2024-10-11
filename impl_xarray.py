@@ -132,12 +132,7 @@ def main(params):
         print("Percentiles calculated!")
         percentile_parts.append(percentiles)
     
-    images = [np.vstack([percentile_parts[i][k] for i in range(len(bands))]) for k in [243, 244]]
-    # plot_and_save_arrays(*images, filename='arrays_plot.png')
-    
-    return reference_period_aggregations, combined_groups, images[0], images[1]
-    
-    
+    return reference_period_aggregations, combined_groups
     
     # print("Calculating Mask...")
     # an_agg_data = aggregated_data.sel(time=slice(an_start, an_end))
