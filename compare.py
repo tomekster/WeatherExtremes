@@ -2,26 +2,11 @@ import netCDF4
 import numpy as np
 import cftime
 from enums import AGG, DAYS_PER_MONTH
-from impl_xarray import main
+from impl_xarray import optimised
 from ftp import FTP
 from dataloader import ZarrLoader, MichaelDataloader
 from diagnostics import run_direct
 from tqdm import tqdm
-
-def download_michaels_data(years=['1959']):
-    ### Download Michaels data from the FTP
-    ftp = FTP()
-    ftp.cd('michaesp/tomasz.sternal/era5.daily')
-    ftp.cd('t2mean')
-    for year in years:
-        files = [file for file in ftp.ls() if year in file]
-        for file in files:
-            print(f"Downloading year {year}")
-            ftp.download(file, f'data/michael_t2_mean/{file}')
-
-def convert_michaels_data_to_zarr(nc_files_dir='data/michael_t2_mean', start="1964-12-01", end="1971-02-01", varname='t2m', target_var_name='daily_mean_2m_temperature', out_zarr_path='data/michaels_t2_mean_as_zarr_1964-12-01_1971-02-01.zarr'):
-    dl = MichaelDataloader()
-    dl.save_michaels_files_as_zarr(nc_files_dir, start, end, varname, target_var_name, out_zarr_path)
 
 def compare_agg():
     # dl = ZarrLoader('data/daily_mean_2m_temperature_1959_1980.zarr') # Raw Weatherbench2 data
@@ -71,7 +56,7 @@ def compare_agg():
         'perc_boosting_window': 5,
         'percentile': 0.99,
     }
-    reference_period_agg, perc243, perc244 = main(PARAMS)
+    reference_period_agg, pre_perc = optimised(PARAMS)
     # print(reference_period_agg)
     # print(reference_period_agg['time'].values)
     specific_date = cftime.DatetimeNoLeap(1962,9,1)
@@ -115,7 +100,7 @@ def compare_data_fields(params, comp_month=9):
     
     EPS = 0.00001
     
-    _, optimized_df = main(params)
+    _, optimized_df = optimised(params)
     np.save("optimized_full_df", optimized_df)
     perc_boost = params['perc_boosting_window']
 

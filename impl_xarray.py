@@ -1,50 +1,29 @@
 from datetime import timedelta
 import numpy as np
-
-from dataloader import ZarrLoader
 from enums import AGG
 from tqdm import tqdm
-from zarrmanager import ZarrManager
+from dask.distributed import Client
+import time
+import dask.array as da
 
-def optimised(params):
-    # Set dates
-    ref_start, ref_end = params['reference_period']
-    an_start, an_end = params['analysis_period']
-    n_years = ref_end.year - ref_start.year + 1
-    print("NUM YEARS: ", n_years)
+import zarr
+import xarray as xr
+import dask.array as da
 
-    half_agg_window = timedelta(days=params['aggregation_window']//2)
-    half_perc_boost_window = timedelta(days=params['perc_boosting_window']//2)
-    
-    agg_start = ref_start - (half_agg_window + half_perc_boost_window)
-    agg_end = ref_end + (half_agg_window + half_perc_boost_window)
-    
-    print("Loading Data...")
-    # Manually Averaged Weatherbench2 data
-    # dl = ZarrLoader('data/daily_mean_2m_temperature_1959_1980.zarr')
-    
-    # Raw Weatherbench2 data
-    # dl = GCSDataLoader()
-    # data = dl.load_weatherbench()
-    
-    # print("Temp2m daily mean from weatherbench")
-    # print(data[params['var']].sel(time=slice('1962-08-30', '1962-09-03')).to_numpy()[:,0,:3])
-    
-    
-    # Michaels T2MEAN .nc files
-    dl = ZarrLoader('data/michaels_t2_mean_as_zarr_1964-12-01_1971-02-01.zarr')
-    data = dl.load()
-    
+def load_and_aggregate(params, input_zarr_path, agg_start, agg_end, perc_start, perc_end):
+    print("Loading the Data...")
+    data = xr.open_zarr(input_zarr_path)
+
     print("Converting to no-leap calendar")
     data = data.convert_calendar('noleap')
 
     print("Calculating Aggregations...")
-    data = data[params['var']].sel(time=slice(agg_start, agg_end))
+    agg_data = data[params['var']].sel(time=slice(agg_start, agg_end))
     
-    assert data['time'][0] == agg_start, "Missing data at the beginning of the reference period"
-    assert data['time'][-1] == agg_end, "Missing data at the end of the reference period"
+    assert agg_data['time'][0] == agg_start, "Missing data at the beginning of the reference period"
+    assert agg_data['time'][-1] == agg_end, "Missing data at the end of the reference period"
     
-    rolling_data = data.rolling(time=params['aggregation_window'], center=True)
+    rolling_data = agg_data.rolling(time=params['aggregation_window'], center=True)
 
     if params['aggregation'] == AGG.MEAN:
         aggregated_data = rolling_data.mean()
@@ -57,46 +36,79 @@ def optimised(params):
     else:
         raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", params['aggregation'])
 
-    reference_period_aggregations = aggregated_data.sel(time=slice(ref_start - half_perc_boost_window, ref_end + half_perc_boost_window))
+    reference_period_aggregations = aggregated_data.sel(time=slice(perc_start, perc_end))
+    return reference_period_aggregations
+    
+def parallel_pre_percentile_arrange(doy_grouped, n_years, pre_percentile_zarr_path, prefix_to_append_index, suffix_to_preppend_index):        
+    prefix_arrays = []
+    main_arrays = []
+    suffix_arrays = []
+    for day_of_year in range(1,366):
+        # Select the group corresponding to this day of year
+        day_group = doy_grouped[day_of_year]
+        
+        array = day_group.data  # Get the underlying dask array
 
-    half_perc_boost = params['perc_boosting_window'] // 2
+        if day_of_year-1 < prefix_to_append_index:
+            suffix_arrays.append(array[1:])
+            array = array[:-1]
+        elif day_of_year-1 >= suffix_to_preppend_index:
+            prefix_arrays.append(array[:-1])
+            array = array[1:]
+        assert array.shape[0] == n_years
+        main_arrays.append(array)
+    arrays = prefix_arrays + main_arrays + suffix_arrays
     
-    # For calulating percentile boosting we need to prepend the days from the end of the year and append the days from the beginning of the year
-    prefix_len = -(ref_start.dayofyr - half_perc_boost - 1) # How many groups from the end should be prepended
-    suffix_len = ref_end.dayofyr + half_perc_boost - 365 # How many groups from the beginning should be appended
     
-    zm = ZarrManager(params)
-    doy_grouped = reference_period_aggregations.groupby('time.dayofyear')
+    print("Rearranging data into pre-percentile format")
+    start = time.time()
+    combined = da.concatenate(arrays).compute()
+    pre_percentile_zarr_store = zarr.open(pre_percentile_zarr_path, mode='w', shape=combined.shape, chunks=(365 * n_years, 1, 1440), dtype=combined.dtype)
+    pre_percentile_zarr_store[:] = combined
+    end = time.time()
+    print(f"Rearranging: {end - start} seconds")
     
-    # Process prefixes
-    print(f"Processing the prefix ({prefix_len})...")
-    for doy, group in tqdm(list(doy_grouped)[-prefix_len:]):
-        group = group.to_numpy()[:-1]
-        assert group.shape[0] == n_years
-        zm.add(group)
-    
-    # Process main
-    print("Processing the days of the year...")
-    for i, (doy, group) in tqdm(enumerate(doy_grouped)):
-        group = group.to_numpy()
-        print(i, doy, group.shape)
-        if i < suffix_len:
-            group = group[:-1]
-        elif i >= len(doy_grouped) - prefix_len:
-            group = group[1:]
-        assert group.shape[0] == n_years
-        zm.add(group)
-    
-    #Process suffixes
-    print(f"Processing the suffix ({suffix_len})...")
-    for doy, group in tqdm(list(doy_grouped)[:suffix_len]):
-        group = group.to_numpy()[1:]
-        assert group.shape[0] == n_years
-        zm.add(group)
+    return pre_percentile_zarr_store
 
-    # Store remaining
-    if zm.elements_list:
-        zm.store()
+def optimised(params):
+    # PARAMETERS INITIALIZATION
+    ref_start, ref_end = params['reference_period']
+    an_start, an_end = params['analysis_period'] # TODO
+    n_years = ref_end.year - ref_start.year + 1
+    print("NUM YEARS: ", n_years)
+
+    half_agg_window = timedelta(days=params['aggregation_window']//2)
+    half_perc_boost_window = timedelta(days=params['perc_boosting_window']//2)
+    
+    half_perc_boost_int = params['perc_boosting_window'] // 2
+    
+    agg_start = ref_start - (half_agg_window + half_perc_boost_window)
+    agg_end = ref_end + (half_agg_window + half_perc_boost_window)
+    
+    perc_start = ref_start - half_perc_boost_window
+    perc_end = ref_end + half_perc_boost_window
+    
+    input_zarr_path = 'data/michaels_t2_mean_as_zarr_1964-12-01_1971-02-01.zarr'
+    
+    prefix_to_append = ref_end.dayofyr + half_perc_boost_int - 365 # How many doy_groups from the beginning should be appended
+    suffix_to_preppend = -(ref_start.dayofyr - half_perc_boost_int - 1) # How many doy_groups from the end should be prepended
+    
+    assert prefix_to_append > 0
+    assert suffix_to_preppend > 0
+    
+    pre_percentile_zarr_path = f"{params['var']}_{ref_start}_{ref_end}_{str(params['aggregation'])}_aggrwindow_{params['aggregation_window']}_percboost_{params['perc_boosting_window']}_perc_{params['percentile']}.zarr"
+    
+    # LOAD AND AGGREGATE DATA
+    start = time.time()
+    agg_data = load_and_aggregate(params, input_zarr_path, agg_start, agg_end, perc_start, perc_end)
+    end = time.time()
+    print(f"Loading and aggregating: {end - start} seconds")
+    
+    # zm = ZarrManager(params, output_zarr)
+    doy_grouped = agg_data.groupby('time.dayofyear')
+
+    # REARRANGE DATA BEFORE CALCULATING THE PERCENTILES
+    pre_perc_zarr = parallel_pre_percentile_arrange(doy_grouped, n_years, pre_percentile_zarr_path, prefix_to_append_index=prefix_to_append, suffix_to_preppend_index=len(doy_grouped)-suffix_to_preppend)
 
     ###
     # Percentile Calculation
@@ -120,27 +132,19 @@ def optimised(params):
     
     bands = list(zip(bands_indices, bands_indices[1:]))
     for (start, end) in bands:
-        band_parts = []
         print(f"Retrieving the band ({start, end})...")
-        for i in tqdm(range(zm.num_arrays)):
-            band_part = zm.zarr_store[f'array_{i}'][:, start:end, :]
-            band_parts.append(band_part)
-        band = np.concat(band_parts)
-        
+        band = pre_perc_zarr[:,start:end,:]
         print("BAND_SHAPE:", band.shape)
-
         percentiles = []
         print(f"Calculating percentiles for the band...")
         for doy in tqdm(range(365)):
             assert len(band) == n_years * (365 + perc_boost-1)
-            print(f"from index: {n_years * doy} to index: {n_years * (perc_boost + doy)}, total_len: {len(band)} = {n_years} * (365 + {perc_boost-1})")
             pre_percentile_subset = band[n_years * doy: n_years * (perc_boost + doy)]
             try:
                 assert not np.isnan(pre_percentile_subset).any()
             except:
                 nan_indices = np.argwhere(np.isnan(pre_percentile_subset))
-                print(f"The array contains NaN values in band {band} for day {doy} (indexed from 0)!", nan_indices.shape)
-                continue
+                raise Exception(f"The array contains NaN values in band {band} for day {doy} (indexed from 0)! {nan_indices.shape}")
             
             percentile =np.quantile(pre_percentile_subset, params['percentile'], axis=0) 
             percentiles.append(percentile)
@@ -149,7 +153,7 @@ def optimised(params):
         print("Percentiles calculated!")
         percentile_parts.append(percentiles)
     
-    return reference_period_aggregations, band
+    return agg_data, band
     
     # print("Calculating Mask...")
     # an_agg_data = aggregated_data.sel(time=slice(an_start, an_end))

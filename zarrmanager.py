@@ -16,8 +16,10 @@ class ZarrManager:
         if sum([len(x) for x in self.elements_list]) >= self.chunk_size:
             self.store()
         
-    def store(self):
+    def store(self, array_id=None):
+        if not (array_id is None):
+            array_id = self.num_arrays
         data = np.concat(self.elements_list)
-        self.zarr_store.create_dataset(f'array_{self.num_arrays}', data=data, chunks=(1, -1, -1), overwrite=True)
+        self.zarr_store.create_dataset(f'array_{array_id}', data=data, chunks=(1, -1, -1), overwrite=True)
         self.num_arrays += 1
         self.elements_list = []

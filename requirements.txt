@@ -8,5 +8,5 @@ scipy
 python-dotenv
 zarr
 gcsfs
-dask
+dask[distributed]
 tqdm
