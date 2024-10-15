@@ -193,7 +193,7 @@ if calcmode == 'aggregate' or calcmode == 'compute':
             if ndays == 0:
                 agg = data[i,:,:]
             elif aggmode == 'mean':
-                agg = np.mean(data[i - ndays:i + ndays,:,:], axis=0)
+                agg = np.mean(data[i - ndays:i + ndays+1,:,:], axis=0)
             elif aggmode == 'median':
                 agg = np.median(data[i - ndays:i + ndays,:,:], axis=0)
             elif aggmode == 'min':
