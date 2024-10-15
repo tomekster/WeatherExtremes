@@ -58,8 +58,8 @@ output_dir = '/net/litho/atmosdyn2/svoigt/project_extremes/temp/measure_time/'
 # prefix of data files
 prefix = 'T2MEAN'
 
-# Number of aggregation/consecutive days (0 corresponds to single day), 1 to 3 days(day before, current day, and day after)
-ndays = 2
+# Number of aggregation centered around the specific day we're looking at
+number_of_days = 3
 
 # Aggregation mode (mean|median|min|max|test)
 aggmode = 'max'
@@ -76,7 +76,7 @@ ref_y1 = 1970
 perc = 99
 
 # Timewindow (in days) for percentile boosting
-timewin = 2
+boosting_timewin = 3
 
 # Set months for analysis
 analysis_months = [9]
@@ -88,6 +88,17 @@ seasonality_y1 = 1990
 # number of gridpoints in model
 nlon = 1440
 nlat = 721
+
+
+
+#%%
+
+# as ndays and timewin is given in total days, we need to calculate how many days are plus/minus the day we're looking at
+ndays = (number_of_days - 1) / 2
+timewin = (boosting_timewin - 1) / 2
+
+
+
 
 
 #%%
