@@ -65,12 +65,12 @@ number_of_days = 3
 aggmode = 'max'
 
 # Start and end of analysis period (year, month)
-y_0 = 1960; m_0 = 1
-y_1 = 1965; m_1 = 1 
+y_0 = 1966; m_0 = 1
+y_1 = 1966; m_1 = 1 
 
 # Start and end of reference period
 ref_y0 = 1965
-ref_y1 = 1970
+ref_y1 = 1966
 
 # Percentile for extreme-event identification
 perc = 99
@@ -79,7 +79,7 @@ perc = 99
 boosting_timewin = 3
 
 # Set months for analysis
-analysis_months = [9]
+analysis_months = [1]
 
 # set period for seasonality calculation
 seasonality_y0 = 1960
@@ -94,8 +94,8 @@ nlat = 721
 #%%
 
 # as ndays and timewin is given in total days, we need to calculate how many days are plus/minus the day we're looking at
-ndays = (number_of_days - 1) / 2
-timewin = (boosting_timewin - 1) / 2
+ndays = int((number_of_days - 1) / 2)
+timewin = int((boosting_timewin - 1) / 2)
 
 
 
@@ -193,15 +193,15 @@ if calcmode == 'aggregate' or calcmode == 'compute':
             if ndays == 0:
                 agg = data[i,:,:]
             elif aggmode == 'mean':
-                agg = np.mean(data[i - ndays:i + ndays+1,:,:], axis=0)
+                agg = np.mean(data[i - ndays:i + ndays + 1,:,:], axis=0)
             elif aggmode == 'median':
-                agg = np.median(data[i - ndays:i + ndays,:,:], axis=0)
+                agg = np.median(data[i - ndays:i + ndays + 1,:,:], axis=0)
             elif aggmode == 'min':
-                agg = np.min(data[i - ndays:i + ndays,:,:], axis=0)
+                agg = np.min(data[i - ndays:i + ndays + 1,:,:], axis=0)
             elif aggmode == 'max':
-                agg = np.max(data[i - ndays:i + ndays,:,:], axis=0)
+                agg = np.max(data[i - ndays:i + ndays + 1,:,:], axis=0)
             elif aggmode == 'sum':
-                agg = np.sum(data[i - ndays:i + ndays,:,:], axis=0)
+                agg = np.sum(data[i - ndays:i + ndays + 1,:,:], axis=0)
 
             # write agg to aggregated field
             agg_field[i-prev_nt,:,:] = agg
