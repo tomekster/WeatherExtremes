@@ -56,7 +56,7 @@ def compare_agg():
         'perc_boosting_window': 5,
         'percentile': 0.99,
     }
-    reference_period_agg, pre_perc = optimised(PARAMS)
+    reference_period_agg, pre_perc = optimised(PARAMS, 'data/michaels_t2_single_arr_mean_zarr_1959-11-01_2021-02-01.zarr')
     # print(reference_period_agg)
     # print(reference_period_agg['time'].values)
     specific_date = cftime.DatetimeNoLeap(1962,9,1)
@@ -100,7 +100,7 @@ def compare_data_fields(params, comp_month=9):
     
     EPS = 0.00001
     
-    _, optimized_df = optimised(params)
+    _, optimized_df = optimised(params, 'data/michaels_t2_single_arr_mean_zarr_1959-11-01_2021-02-01.zarr')
     np.save("optimized_full_df", optimized_df)
     perc_boost = params['perc_boosting_window']
 

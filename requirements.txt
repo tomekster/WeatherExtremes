@@ -10,3 +10,6 @@ zarr
 gcsfs
 dask[distributed]
 tqdm
+opencv-python
+imageio
+imageio[ffmpeg]

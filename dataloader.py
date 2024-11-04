@@ -96,7 +96,6 @@ class MichaelDataloader:
         # Check if the Zarr store already exists
         zarr_exists = os.path.exists(output_zarr)
 
-        datasets = []
         # Loop through all files in the directory
         for file_name in sorted(list(os.listdir(directory))):
             # Match the pattern for filenames like T2MEAN-1969-10
@@ -135,13 +134,15 @@ class MichaelDataloader:
                         }
                     )
                     ds['time'] = ds.indexes['time'].to_datetimeindex().values
-
-                    datasets.append(ds)
-        
-        
-        # If the Zarr store does not exist, save the first dataset and create the Zarr store
-        ds = xr.concat(datasets)
-        ds.chunk({'time': 1, 'lat': 721, 'lon': 1440}).to_zarr(output_zarr, mode='w')
+                    
+                    # Check if the Zarr store already exists
+                    zarr_exists = os.path.exists(output_zarr)
+                    if not zarr_exists:
+                        # If the Zarr store does not exist, save the first dataset and create the Zarr store
+                        ds.chunk({'time': 1, 'lat': 721, 'lon': 1440}).to_zarr(output_zarr, mode='w')
+                    else:
+                        # If the Zarr store exists, append the new data to it
+                        ds.chunk({'time': 1, 'lat': 721, 'lon': 1440}).to_zarr(output_zarr, mode='a', append_dim='time')
 
         # Open the final Zarr dataset for verification
         dataset = xr.open_zarr(output_zarr)

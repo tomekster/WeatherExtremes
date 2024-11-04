@@ -181,15 +181,15 @@ def run_direct(
                 if ndays == 0:
                     agg = data[i,:,:]
                 elif aggmode == 'mean':
-                    agg = np.mean(data[i - ndays:i + ndays,:,:], axis=0)
+                    agg = np.mean(data[i - ndays:i + ndays + 1,:,:], axis=0)
                 elif aggmode == 'median':
-                    agg = np.median(data[i - ndays:i + ndays,:,:], axis=0)
+                    agg = np.median(data[i - ndays:i + ndays + 1,:,:], axis=0)
                 elif aggmode == 'min':
-                    agg = np.min(data[i - ndays:i + ndays,:,:], axis=0)
+                    agg = np.min(data[i - ndays:i + ndays + 1,:,:], axis=0)
                 elif aggmode == 'max':
-                    agg = np.max(data[i - ndays:i + ndays,:,:], axis=0)
+                    agg = np.max(data[i - ndays:i + ndays + 1,:,:], axis=0)
                 elif aggmode == 'sum':
-                    agg = np.sum(data[i - ndays:i + ndays,:,:], axis=0)
+                    agg = np.sum(data[i - ndays:i + ndays + 1,:,:], axis=0)
 
                 # write agg to aggregated field
                 agg_field[i-prev_nt,:,:] = agg

@@ -22,8 +22,7 @@ class FTP:
 
     def download(self, fpath, save_to):
         local_file = open(save_to, 'wb')
-        print(f'fpath: {fpath}')
-        print(self.ls())
+        print(f'Downloading fpath: {fpath}')
         # Retrieve the file from the FTP server and write it to the local file
         self.ftp.retrbinary(f'RETR {fpath}', local_file.write)
         
