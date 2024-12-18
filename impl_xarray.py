@@ -18,15 +18,24 @@ import matplotlib.pyplot as plt
 def load_and_aggregate(params, input_zarr_path, agg_start, agg_end):
     print("Loading the Data...")
     data = xr.open_zarr(input_zarr_path)
-    print(data)
+    print('Input Zarr:', data)
+    print(list(data.data_vars))
 
+    print("Resample to daily values")    
+    resampled = data[params['var']].resample(time='1D').max()
+    # resampled = resampled.rename({"temperature": "temperature_mean"})
+
+    
     print("Converting to no-leap calendar")
-    data = data.convert_calendar('noleap')
+    resampled = resampled.convert_calendar('noleap')
+    print("Resampled:", resampled)
+    
+    agg_data = resampled.sel(time=slice(agg_start, agg_end))
+    
+    print(agg_data)
 
     print("Calculating Aggregations...")
-    agg_data = data[params['var']].sel(time=slice(agg_start, agg_end))
-    
-    assert agg_data['time'][0] == agg_start, "Missing data at the beginning of the reference period"
+    assert agg_data['time'][0] == agg_start, f"Missing data at the beginning of the reference period, {agg_data['time'][0]} != {agg_start}"
     assert agg_data['time'][-1] == agg_end, "Missing data at the end of the reference period"
     
     rolling_data = agg_data.rolling(time=params['aggregation_window'], center=True)
@@ -42,6 +51,14 @@ def load_and_aggregate(params, input_zarr_path, agg_start, agg_end):
     else:
         raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", params['aggregation'])
     
+    # Make sure we use the correct dimension names
+    if 'lat' in aggregated_data.dims:
+        aggregated_data = aggregated_data.rename({"lat": "latitude"})
+    if 'lon' in aggregated_data.dims:
+        aggregated_data = aggregated_data.rename({"lon": "longitude"})
+    assert 'latitude' in aggregated_data.dims
+    assert 'longitude' in aggregated_data.dims
+    
     return aggregated_data
     
 def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, pre_percentile_zarr_path, perc_boost):        
@@ -56,7 +73,6 @@ def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, pre_p
     
     assert prefix_to_append >= 0
     assert suffix_to_preppend >= 0
-    
     
     # Read the data and group by Day Of Year
     agg_data = agg_data.sel(time=slice(perc_start, perc_end))
@@ -80,7 +96,7 @@ def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, pre_p
         elif day_of_year-1 >= suffix_to_preppend_index:
             prefix_arrays.append(array[:-1])
             array = array[1:]
-        assert array.shape[0] == n_years, f"Wrong array shape! Shape: {array.shape}"
+        assert array.shape[0] == n_years, f"Wrong array shape! Shape: {array.shape}, Nyears: {n_years}"
         main_arrays.append(array)
     arrays = prefix_arrays + main_arrays + suffix_arrays
     
@@ -142,7 +158,7 @@ def calculate_percentile(perc_boost, n_years, pre_perc_zarr, perc):
         assert np.any(percentiles_band > 0)
         all_percentiles.append(percentiles_band)
 
-    res_percentiles = np.concat(all_percentiles, axis=1)
+    res_percentiles = np.concatenate(all_percentiles, axis=1)
     return res_percentiles
 
 def optimised(params, input_zarr_path):
@@ -162,13 +178,26 @@ def optimised(params, input_zarr_path):
     agg_start = min(ref_start, an_start) - (half_agg_window + half_perc_boost_window)
     agg_end = max(ref_end, an_end) + (half_agg_window + half_perc_boost_window)
     
-    pre_percentile_zarr_path = f"{var}_{ref_start.year}_{ref_end.year}_{str(params['aggregation'])}_aggrwindow_{params['aggregation_window']}_percboost_{perc_boost}.zarr"
+    identifier = f"{var}_{ref_start.year}_{ref_end.year}_{str(params['aggregation'])}_aggrwindow_{params['aggregation_window']}_percboost_{perc_boost}"
+    
+    pre_percentile_zarr_path = f"{identifier}.zarr"
     
     # LOAD AND AGGREGATE DATA
-    aggregated_data = load_and_aggregate(params, input_zarr_path, agg_start, agg_end)
+    agg_path = f"{identifier}_agg.zarr"
+    
+    if os.path.exists(agg_path):
+        print(f"Aggregation Zarr exists, reading from {agg_path}")
+        aggregated_data = xr.open_zarr(agg_path)[var]
+        print(aggregated_data)
+    else:
+        print("Aggregation Zarr not found. Calculating and saving aggregations")
+        print("Calculating aggregations... ")
+        aggregated_data = load_and_aggregate(params, input_zarr_path, agg_start, agg_end)
+        print("Saving aggregations... ")
+        aggregated_data.to_zarr(agg_path, mode='w', compute=True)
     
     if os.path.exists(pre_percentile_zarr_path):
-        print("PrePercentile Zarr exists, reading from disk")
+        print(f"PrePercentile Zarr exists, reading from {pre_percentile_zarr_path}")
         pre_perc_zarr = zarr.open(pre_percentile_zarr_path)
     else:
         print("PrePercentile Zarr not found. Calcluating and saving pre-percentiles")
@@ -178,64 +207,111 @@ def optimised(params, input_zarr_path):
 
     # CALCULATE PERCENTILES
     print("Calculating percentiles...")
-    exceedances_dir = f"exceedances/var_{var}_ref_{ref_start.year}_{ref_end.year}_{str(params['aggregation']).replace('.','_')}_agg_wind_{agg_window}_perc_boost_{perc_boost}"
+    exceedances_dir = f"exceedances/{identifier}"
     os.makedirs(exceedances_dir, exist_ok=True)
     
     for percentile in params['percentiles']:
-        threshholds_path = f"{exceedances_dir}/thresholds_{str(percentile).replace('.','_')}"
+        perc_string = str(percentile).replace('.','_')
+        threshholds_path = f"{exceedances_dir}/thresholds_{perc_string}"
 
         if os.path.exists(threshholds_path + '.npy'):
-            print("Threshholds file exists. Loading threshholds")
-            threshholds = np.load(threshholds_path + '.npy')
+            path = threshholds_path + '.npy'
+            print(f"Threshholds file exists. Loading from {path}")
+            threshholds = np.load(path)
         else:
             print("Threshholds file not found. Calculating percentiles")
             threshholds = calculate_percentile(perc_boost, n_years, pre_perc_zarr, percentile)
             print("Saving threshholds")
-            np.save(threshholds_path)
+            np.save(threshholds_path, threshholds)
         
+        monthly_exceedances_path = f'{exceedances_dir}/monthly_exceedances_{perc_string}.zarr'
+        if os.path.exists(monthly_exceedances_path):
+            print(f"Monthly exceedances file exists. Loading them from file from {monthly_exceedances_path}")
+            monthly_exceedances = xr.open_zarr(monthly_exceedances_path)
+        else:
+            print("Monthly exceedances file not found. Calculating exceedances")
+            aggregated_data = aggregated_data.sel(time=slice(an_start, an_end))
+            print('Aggregated Data', aggregated_data)
+            
+            assert aggregated_data.shape[0] % threshholds.shape[0] == 0, f"{aggregated_data.shape}, {threshholds.shape}"
+            aggregated_data_doy = aggregated_data.groupby('time.dayofyear')
+            print('Aggregated Data DOY', aggregated_data_doy)
+            
+            
+            threshhold_da = xr.DataArray(threshholds, dims=["dayofyear", 'latitude', 'longitude'])
+            exceedances_doy = (aggregated_data_doy > threshhold_da)
+            exceedances_doy = exceedances_doy.chunk({"time": -1})
+            monthly_exceedances = exceedances_doy.resample(time="1M").sum()
+            print(f"Saving monthly exceedances to {monthly_exceedances_path}")
+            monthly_exceedances.to_zarr(monthly_exceedances_path)
         
-        aggregated_data = aggregated_data.sel(time=slice(an_start, an_end))
-        
-        # assert aggregated_data.shape[0] % threshholds.shape[0] == 0
-        # mult = aggregated_data.shape[0] // threshholds.shape[0]
-        # expanded_threshold = np.tile(threshholds, (mult, 1, 1))
-        # monthly_exceedances = (aggregated_data > expanded_threshold).resample(time="1M").sum(dim="time")
-        
-        aggregated_data_doy = aggregated_data.groupby('time.dayofyear')
-        threshhold_da = xr.DataArray(threshholds, dims=["dayofyear", "latitude", "longitude"])
-        exceedances_doy = (aggregated_data_doy > threshhold_da)
-        exceedances_doy = exceedances_doy.chunk({"time": -1})
-        monthly_exceedances = exceedances_doy.resample(time="1M")
-        monthly_exceedances.sum(dim="time")
-        
-        
-        # Define a function to calculate the trend slope for a single time series
-        def calculate_slope(time_series):
-            # Remove NaNs
-            time = np.arange(len(time_series))
-            mask = ~np.isnan(time_series)
-            if np.sum(mask) > 1:  # Ensure there are enough valid points to calculate slope
-                slope, _, _, _, _ = linregress(time[mask], time_series[mask])
-                return slope
-            else:
-                return np.nan
+        # {var}_{ref_start.year}_{ref_end.year}_{str(params['aggregation'])}_aggrwindow_{params['aggregation_window']}_percboost_{perc_boost}
+        trends_path = f'{exceedances_dir}/trends/{perc_string}_trends.zarr'
+        if os.path.exists(trends_path):
+            print(f"Trends file exists, loading zarr from {trends_path}")
+            trends = xr.open_zarr(trends_path)
+            print("TRENDS", trends)
+        else:
+            # Create a new DataArray to store the trends
+            trends = xr.DataArray(
+                np.nan, 
+                dims=["month", "latitude", "longitude"],
+                coords={"month": np.arange(1, 13), "latitude": monthly_exceedances.latitude, "longitude": monthly_exceedances.longitude},
+                name="trend"
+            )
+            
+            # Group by month
+            for month in range(1, 13):
+                print(f"Calculating trend for month {month}")
+                # Select data for the current month
+                monthly_data = monthly_exceedances.sel(time=monthly_exceedances['time.month'] == month)
+                
+                # Get the number of time points for regression (60 years, assuming one point per year)
+                time_index = np.arange(monthly_data.time.size)
+                
+                # Define a function to calculate the trend (slope) for each lat-lon pair
+                def calculate_slope(y):
+                    # Perform linear regression on the time dimension
+                    if np.all(np.isnan(y)):
+                        return np.nan
+                    slope, _, _, _, _ = linregress(time_index, y)
+                    return slope
+                
+                # Apply the function across the latitude and longitude dimensions
+                trend = xr.apply_ufunc(
+                    calculate_slope,
+                    monthly_data,
+                    input_core_dims=[["time"]],
+                    vectorize=True,
+                    dask="parallelized",
+                    output_dtypes=[float],
+                    dask_gufunc_kwargs={"allow_rechunk": True}
+                )
+                
+                # Store the trend for the current month
+                print(trend)
+                trends.loc[month] = trend['__xarray_dataarray_variable__']
+            print("Saving trends to {trends_path}")
+            trends.to_zarr(trends_path, mode='w', compute=True)
 
-        # Apply this function across latitude and longitude for each time series
-        slopes = xr.apply_ufunc(
-            calculate_slope,
-            monthly_exceedances,
-            input_core_dims=[["time"]],
-            dask="parallelized",
-            vectorize=True
-        )
-
-        plt.figure(figsize=(10, 6))
-        plt.pcolormesh(slopes['longitude'], slopes['latitude'], slopes, shading='auto')
-        plt.colorbar(label="Trend Slope")
-        plt.title("Trend of Exceedance Count per Location")
-        plt.xlabel("Longitude")
-        plt.ylabel("Latitude")
-        plt.show()
+        trends = trends['trend']
+        
+        for month in range(1,13):
+            plt.figure(figsize=(10, 6))
+            trend_month = trends.sel(month=month)
+            # trend_month.plot(
+            #     x='longitude', y='latitude', cmap='viridis', 
+            #     cbar_kwargs={'label': 'Trend'}
+            # )
+            trend_month.plot(
+                x='longitude', y='latitude', cmap='RdBu_r', 
+                cbar_kwargs={'label': 'Trend'}
+            )
+            plt.title(f'Trend Values for Month {month}')
+            plt.xlabel('Longitude')
+            plt.ylabel('Latitude')
+            plt.savefig(f"{exceedances_dir}/trends/{month}.png")
+            plt.show()
         
         # threshholds = np.zeros((365,721,1440))
         # generate_temperature_exceedance_mask(aggregated_data, var, an_start, an_end, threshholds, percentile, exceedances_dir)
