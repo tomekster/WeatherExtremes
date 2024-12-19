@@ -1,4 +1,4 @@
-.venv
+venv
 .env
 scratchpad.py
 __pycache__

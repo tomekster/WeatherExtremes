@@ -14,49 +14,45 @@ from exceedences import generate_temperature_exceedance_mask
 from scipy.stats import linregress
 import matplotlib.pyplot as plt
 
-
-def load_and_aggregate(params, input_zarr_path, agg_start, agg_end):
-    print("Loading the Data...")
-    data = xr.open_zarr(input_zarr_path)
-    print(data)
-
+def aggregate(data, aggregation, agg_wind, start, end):
     print("Converting to no-leap calendar")
     data = data.convert_calendar('noleap')
-
+    
+    data = data.sel(time=slice(start, end))
+    
+    assert data['time'][0] == start, f"Missing data at the beginning of the reference period. Data: {data['time'][0]}, Start: {start}"
+    assert data['time'][-1] == end, f"Missing data at the end of the reference period. Data: {data['time'][-1]}, Start: {start}"
+    
     print("Calculating Aggregations...")
-    agg_data = data[params['var']].sel(time=slice(agg_start, agg_end))
-    
-    assert agg_data['time'][0] == agg_start, "Missing data at the beginning of the reference period"
-    assert agg_data['time'][-1] == agg_end, "Missing data at the end of the reference period"
-    
-    rolling_data = agg_data.rolling(time=params['aggregation_window'], center=True)
+    rolling_data = data.rolling(time=agg_wind, center=True)
 
-    if params['aggregation'] == AGG.MEAN:
+    if aggregation == AGG.MEAN:
         aggregated_data = rolling_data.mean()
-    elif params['aggregation'] == AGG.SUM:
+    elif aggregation == AGG.SUM:
         aggregated_data = rolling_data.sum()
-    elif params['aggregation'] == AGG.MIN:
+    elif aggregation == AGG.MIN:
         aggregated_data = rolling_data.min()
-    elif params['aggregation'] == AGG.MAX:
+    elif aggregation == AGG.MAX:
         aggregated_data = rolling_data.max()
     else:
-        raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", params['aggregation'])
+        raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", aggregation)
     
     return aggregated_data
     
-def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, pre_percentile_zarr_path, perc_boost):        
+def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, perc_boost, start_doy=1, end_doy=365):        
     half_perc_boost = perc_boost // 2
     perc_start = ref_start - timedelta(days=half_perc_boost)
     perc_end = ref_end + timedelta(days=half_perc_boost)
-    
     dec31doy = 365
     jan1doy = 1
     prefix_to_append = dec31doy + half_perc_boost - 365 # How many doy_groups from the beginning should be appended
     suffix_to_preppend = -(jan1doy - half_perc_boost - 1) # How many doy_groups from the end should be prepended
     
+    # Rearrange the grouped by DOY data and save into a zar suitable for faster percentile calculation
+    print("Rearranging data into pre-percentile format")
+    
     assert prefix_to_append >= 0
     assert suffix_to_preppend >= 0
-    
     
     # Read the data and group by Day Of Year
     agg_data = agg_data.sel(time=slice(perc_start, perc_end))
@@ -68,56 +64,57 @@ def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, pre_p
     prefix_arrays = []
     main_arrays = []
     suffix_arrays = []
-    for day_of_year in range(1,366):
+    for day_of_year in range(start_doy,end_doy+1):
         # Select the group corresponding to this day of year
-        day_group = doy_grouped[day_of_year]
-        
-        array = day_group.data  # Get the underlying dask array
+        doy_groups_np = doy_grouped[day_of_year].data  # Get the underlying dask array
 
         if day_of_year-1 < prefix_to_append_index:
-            suffix_arrays.append(array[1:])
-            array = array[:-1]
+            suffix_arrays.append(doy_groups_np[1:])
+            doy_groups_np = doy_groups_np[:-1]
         elif day_of_year-1 >= suffix_to_preppend_index:
-            prefix_arrays.append(array[:-1])
-            array = array[1:]
-        assert array.shape[0] == n_years, f"Wrong array shape! Shape: {array.shape}"
-        main_arrays.append(array)
+            prefix_arrays.append(doy_groups_np[:-1])
+            doy_groups_np = doy_groups_np[1:]
+            
+        assert doy_groups_np.shape[0] == n_years, f"Wrong array shape! Shape: {doy_groups_np.shape}"
+        main_arrays.append(doy_groups_np)
     arrays = prefix_arrays + main_arrays + suffix_arrays
-    
-    # Rearrange the grouped by DOY data and save into a zar suitable for faster percentile calculation
-    print("Rearranging data into pre-percentile format")
+    return arrays
+
+def save_pre_percentile_to_zarr(arrays, zarr_path, n_years, batch_size=1):
     start = time.time()
     
-    batch_size = 100
+    # lat_size = 721
+    # lon_size = 1440
+    lat_size = 1
+    lon_size = 1
     
-    pre_percentile_zarr_store = zarr.open(pre_percentile_zarr_path, mode='w', shape=(len(arrays) * n_years, 721, 1440), chunks=(batch_size * n_years, 1, 1440), dtype=arrays[0].dtype)
+    pre_percentile_zarr_store = zarr.open(zarr_path, mode='w', shape=(len(arrays) * n_years, lat_size, lon_size), chunks=(batch_size * n_years, 1, lon_size), dtype=arrays[0].dtype)
     
     for i in tqdm(list(range(0, len(arrays), batch_size))):
         batch = da.concatenate(arrays[i:i + batch_size])
         start_index = i * n_years
         end_index = start_index + batch.shape[0]
         da.to_zarr(batch, pre_percentile_zarr_store, region=(slice(start_index, end_index), slice(None), slice(None)))
-        
+
     end = time.time()
     print(f"Rearranging: {end - start} seconds")
     
     return pre_percentile_zarr_store
+    
 
-def calculate_percentile(perc_boost, n_years, pre_perc_zarr, perc):
-
+def calculate_percentile(perc_boost, n_years, pre_perc_zarr, perc, lat_size=721, lon_size=1440):
     # To reduce the memory footprint and enable easy parallelization we will calculate the percentiles band, by band
     # Since the original weather state array is 721 x 1440, we will split the first dimension into bands 
-    dim = 721
     max_mem = 1000000000 # ~1 GB
     max_floats = max_mem // 4 # 4 bytes per float
-    band_size = max_floats // (n_years * (365 + perc_boost - 1) * 1440) 
-    band_size = min(721, band_size)
+    band_size = max_floats // (n_years * (365 + perc_boost - 1) * lon_size)
+    band_size = min(lat_size, band_size)
     
     print("BAND_SIZE", band_size)
     
-    bands_indices = list(range(0, dim, band_size))
-    if bands_indices[-1] < dim:
-        bands_indices.append(dim)
+    bands_indices = list(range(0, lat_size, band_size))
+    if bands_indices[-1] < lat_size:
+        bands_indices.append(lat_size)
     
     bands = list(zip(bands_indices, bands_indices[1:]))
     all_percentiles = []
@@ -126,13 +123,13 @@ def calculate_percentile(perc_boost, n_years, pre_perc_zarr, perc):
         assert np.any(band > 0)
         percentiles = []
         for doy in tqdm(range(365), leave=False):
-            assert len(band) == n_years * (365 + perc_boost-1), f'Wrong band shape: {band.shape} when expecte length is {n_years * (365 + perc_boost-1)}'
+            assert len(band) == n_years * (365 + perc_boost-1), f'Wrong band shape: {band.shape}. The expected length is {n_years * (365 + perc_boost-1)}'
             pre_percentile_window = band[n_years * doy: n_years * (perc_boost + doy)]
             try:
                 assert not np.isnan(pre_percentile_window).any()
             except:
                 nan_indices = np.argwhere(np.isnan(pre_percentile_window))
-                raise Exception(f"The array contains NaN values in band {band} for day {doy} (indexed from 0)! {nan_indices.shape}")
+                raise Exception(f"The array contains NaN values in band {band} for day-of-year {doy} (indexed from 0)! {nan_indices.shape}")
             
             percentile =np.quantile(pre_percentile_window, perc, axis=0) 
             percentiles.append(percentile)
@@ -148,6 +145,7 @@ def calculate_percentile(perc_boost, n_years, pre_perc_zarr, perc):
 def optimised(params, input_zarr_path):
     # PARAMETERS INITIALIZATION
     var = params['var']
+    aggregation = params['aggregation']
     ref_start, ref_end = params['reference_period']
     an_start, an_end = params['analysis_period']
     perc_boost = params['perc_boosting_window']
@@ -162,10 +160,11 @@ def optimised(params, input_zarr_path):
     agg_start = min(ref_start, an_start) - (half_agg_window + half_perc_boost_window)
     agg_end = max(ref_end, an_end) + (half_agg_window + half_perc_boost_window)
     
-    pre_percentile_zarr_path = f"{var}_{ref_start.year}_{ref_end.year}_{str(params['aggregation'])}_aggrwindow_{params['aggregation_window']}_percboost_{perc_boost}.zarr"
+    pre_percentile_zarr_path = f"{var}_{ref_start.year}_{ref_end.year}_{str(aggregation)}_aggrwindow_{params['aggregation_window']}_percboost_{perc_boost}.zarr"
     
     # LOAD AND AGGREGATE DATA
-    aggregated_data = load_and_aggregate(params, input_zarr_path, agg_start, agg_end)
+    data = xr.open_zarr(input_zarr_path)[var]
+    aggregated_data = aggregate(data, var, aggregation, agg_window, agg_start, agg_end)
     
     if os.path.exists(pre_percentile_zarr_path):
         print("PrePercentile Zarr exists, reading from disk")
@@ -174,11 +173,12 @@ def optimised(params, input_zarr_path):
         print("PrePercentile Zarr not found. Calcluating and saving pre-percentiles")
 
         # REARRANGE DATA BEFORE CALCULATING THE PERCENTILES
-        pre_perc_zarr = parallel_pre_percentile_arrange(aggregated_data, n_years, ref_start, ref_end, pre_percentile_zarr_path, perc_boost)
-
+        pre_perc_array = parallel_pre_percentile_arrange(aggregated_data, n_years, ref_start, ref_end, perc_boost)
+        pre_perc_zarr = save_pre_percentile_to_zarr(pre_perc_array, pre_percentile_zarr_path, n_years)
+        
     # CALCULATE PERCENTILES
     print("Calculating percentiles...")
-    exceedances_dir = f"exceedances/var_{var}_ref_{ref_start.year}_{ref_end.year}_{str(params['aggregation']).replace('.','_')}_agg_wind_{agg_window}_perc_boost_{perc_boost}"
+    exceedances_dir = f"exceedances/var_{var}_ref_{ref_start.year}_{ref_end.year}_{str(aggregation).replace('.','_')}_agg_wind_{agg_window}_perc_boost_{perc_boost}"
     os.makedirs(exceedances_dir, exist_ok=True)
     
     for percentile in params['percentiles']:
@@ -195,11 +195,6 @@ def optimised(params, input_zarr_path):
         
         
         aggregated_data = aggregated_data.sel(time=slice(an_start, an_end))
-        
-        # assert aggregated_data.shape[0] % threshholds.shape[0] == 0
-        # mult = aggregated_data.shape[0] // threshholds.shape[0]
-        # expanded_threshold = np.tile(threshholds, (mult, 1, 1))
-        # monthly_exceedances = (aggregated_data > expanded_threshold).resample(time="1M").sum(dim="time")
         
         aggregated_data_doy = aggregated_data.groupby('time.dayofyear')
         threshhold_da = xr.DataArray(threshholds, dims=["dayofyear", "latitude", "longitude"])
@@ -236,7 +231,4 @@ def optimised(params, input_zarr_path):
         plt.xlabel("Longitude")
         plt.ylabel("Latitude")
         plt.show()
-        
-        # threshholds = np.zeros((365,721,1440))
-        # generate_temperature_exceedance_mask(aggregated_data, var, an_start, an_end, threshholds, percentile, exceedances_dir)
     

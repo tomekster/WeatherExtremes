@@ -6,6 +6,9 @@ import netCDF4
 import cftime
 from enums import DAYS_PER_MONTH
 
+import os 
+print(os.getcwd())
+
 class GCSDataLoader:
 
     def __init__(self):
@@ -86,6 +89,9 @@ class MichaelDataloader:
         - target_variable_name: The target variable name in the output Zarr store.
         - output_zarr: The output path for the Zarr dataset.
         """
+        
+        assert os.path.exists(directory), directory
+        
         # Convert the start and end dates into pandas timestamps for comparison
         start_timestamp = cftime.DatetimeGregorian.strptime(start_date, "%Y-%m-%d")
         end_timestamp = cftime.DatetimeGregorian.strptime(end_date, "%Y-%m-%d")
@@ -96,8 +102,11 @@ class MichaelDataloader:
         # Check if the Zarr store already exists
         zarr_exists = os.path.exists(output_zarr)
 
+        files = list(os.listdir(directory))
+        assert len(files) > 0
+
         # Loop through all files in the directory
-        for file_name in sorted(list(os.listdir(directory))):
+        for file_name in sorted(files):
             # Match the pattern for filenames like T2MEAN-1969-10
             match = file_pattern.match(file_name)
             if match:

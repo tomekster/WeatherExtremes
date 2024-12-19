@@ -1,5 +1,5 @@
-from dataloader import GCSDataLoader, MichaelDataloader
-from ftp import FTP
+from data_loading.dataloader import GCSDataLoader, MichaelDataloader
+from data_loading.ftp import FTP
 
 def download_from_gcs():
     dl = GCSDataLoader()
@@ -26,12 +26,14 @@ def download_michaels_data(years=['1942']):
             ftp.download(file, f'data/michael_t2_mean/{file}')
 
 nc_files_dir='data/michael_t2_mean'
-start="1959-11-01"
-end="2021-02-01"
+start_year = 1990
+end_year = 2006
+start=f"{start_year-1}-11-01"
+end=f"{end_year+1}-02-01"
 varname='t2m'
 target_var_name='daily_mean_2m_temperature'
-out_zarr_path=f'data/michaels_t2_single_arr_mean_zarr_{start}_{end}.zarr'
+out_zarr_path=f'data/michaels_t2_single_arr_mean_zarr_{start_year}_{end_year}.zarr'
 
-# download_michaels_data(years=[str(x) for x in range(1991,2021)])
+download_michaels_data(years=[str(x) for x in range(start_year-1, end_year + 1)])
 dl = MichaelDataloader()
 dl.save_michaels_files_as_zarr(nc_files_dir, start, end, varname, target_var_name, out_zarr_path)
