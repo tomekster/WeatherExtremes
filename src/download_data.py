@@ -1,16 +1,16 @@
 from data_loading.dataloader import GCSDataLoader, MichaelDataloader
 from data_loading.ftp import FTP
 
-def download_from_gcs():
-    dl = GCSDataLoader()
+# def download_from_gcs():
+#     dl = GCSDataLoader()
 
-    VAR = '2m_temperature'
-    START = '1959-01-01'
-    END = '1980-01-01'
-    DATA_FOLDER_PATH = 'data'
+#     VAR = '2m_temperature'
+#     START = '1959-01-01'
+#     END = '1980-01-01'
+#     DATA_FOLDER_PATH = 'data'
 
-    dl.download_and_store_as_zarr(VAR, START , END, DATA_FOLDER_PATH)
-    dl.calculate_daily_mean_2m_temperature(f"{DATA_FOLDER_PATH}/2m_temperature_1959-01-01_to_1980-01-01.zarr", f"{DATA_FOLDER_PATH}/daily_mean_2m_temperature_1959_1980.zarr")
+#     dl.download_and_store_as_zarr(VAR, START , END, DATA_FOLDER_PATH)
+#     dl.calculate_daily_mean_2m_temperature(f"{DATA_FOLDER_PATH}/2m_temperature_1959-01-01_to_1980-01-01.zarr", f"{DATA_FOLDER_PATH}/daily_mean_2m_temperature_1959_1980.zarr")
 
 def download_michaels_data(years=['1942']):
     ### Download Michaels data from the FTP

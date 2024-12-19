@@ -37,6 +37,14 @@ def aggregate(data, aggregation, agg_wind, start, end):
     else:
         raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", aggregation)
     
+    # Make sure we use the correct dimension names
+    if 'lat' in aggregated_data.dims:
+        aggregated_data = aggregated_data.rename({"lat": "latitude"})
+    if 'lon' in aggregated_data.dims:
+        aggregated_data = aggregated_data.rename({"lon": "longitude"})
+    assert 'latitude' in aggregated_data.dims
+    assert 'longitude' in aggregated_data.dims
+    
     return aggregated_data
     
 def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, perc_boost, start_doy=1, end_doy=365):        
@@ -80,13 +88,8 @@ def parallel_pre_percentile_arrange(agg_data, n_years, ref_start, ref_end, perc_
     arrays = prefix_arrays + main_arrays + suffix_arrays
     return arrays
 
-def save_pre_percentile_to_zarr(arrays, zarr_path, n_years, batch_size=1):
+def save_pre_percentile_to_zarr(arrays, zarr_path, n_years, batch_size=1, lat_size=721, lon_size=1440):
     start = time.time()
-    
-    # lat_size = 721
-    # lon_size = 1440
-    lat_size = 1
-    lon_size = 1
     
     pre_percentile_zarr_store = zarr.open(zarr_path, mode='w', shape=(len(arrays) * n_years, lat_size, lon_size), chunks=(batch_size * n_years, 1, lon_size), dtype=arrays[0].dtype)
     
@@ -139,7 +142,7 @@ def calculate_percentile(perc_boost, n_years, pre_perc_zarr, perc, lat_size=721,
         assert np.any(percentiles_band > 0)
         all_percentiles.append(percentiles_band)
 
-    res_percentiles = np.concat(all_percentiles, axis=1)
+    res_percentiles = np.concatenate(all_percentiles, axis=1)
     return res_percentiles
 
 def optimised(params, input_zarr_path):
@@ -167,7 +170,7 @@ def optimised(params, input_zarr_path):
     aggregated_data = aggregate(data, var, aggregation, agg_window, agg_start, agg_end)
     
     if os.path.exists(pre_percentile_zarr_path):
-        print("PrePercentile Zarr exists, reading from disk")
+        print(f"PrePercentile Zarr exists, reading from {pre_percentile_zarr_path}")
         pre_perc_zarr = zarr.open(pre_percentile_zarr_path)
     else:
         print("PrePercentile Zarr not found. Calcluating and saving pre-percentiles")
@@ -182,17 +185,39 @@ def optimised(params, input_zarr_path):
     os.makedirs(exceedances_dir, exist_ok=True)
     
     for percentile in params['percentiles']:
-        threshholds_path = f"{exceedances_dir}/thresholds_{str(percentile).replace('.','_')}"
+        perc_string = str(percentile).replace('.','_')
+        threshholds_path = f"{exceedances_dir}/thresholds_{perc_string}"
 
         if os.path.exists(threshholds_path + '.npy'):
-            print("Threshholds file exists. Loading threshholds")
-            threshholds = np.load(threshholds_path + '.npy')
+            path = threshholds_path + '.npy'
+            print(f"Threshholds file exists. Loading from {path}")
+            threshholds = np.load(path)
         else:
             print("Threshholds file not found. Calculating percentiles")
             threshholds = calculate_percentile(perc_boost, n_years, pre_perc_zarr, percentile)
             print("Saving threshholds")
-            np.save(threshholds_path)
+            np.save(threshholds_path, threshholds)
         
+        monthly_exceedances_path = f'{exceedances_dir}/monthly_exceedances_{perc_string}.zarr'
+        if os.path.exists(monthly_exceedances_path):
+            print(f"Monthly exceedances file exists. Loading them from file from {monthly_exceedances_path}")
+            monthly_exceedances = xr.open_zarr(monthly_exceedances_path)
+        else:
+            print("Monthly exceedances file not found. Calculating exceedances")
+            aggregated_data = aggregated_data.sel(time=slice(an_start, an_end))
+            print('Aggregated Data', aggregated_data)
+            
+            assert aggregated_data.shape[0] % threshholds.shape[0] == 0, f"{aggregated_data.shape}, {threshholds.shape}"
+            aggregated_data_doy = aggregated_data.groupby('time.dayofyear')
+            print('Aggregated Data DOY', aggregated_data_doy)
+            
+            
+            threshhold_da = xr.DataArray(threshholds, dims=["dayofyear", 'latitude', 'longitude'])
+            exceedances_doy = (aggregated_data_doy > threshhold_da)
+            exceedances_doy = exceedances_doy.chunk({"time": -1})
+            monthly_exceedances = exceedances_doy.resample(time="1M").sum()
+            print(f"Saving monthly exceedances to {monthly_exceedances_path}")
+            monthly_exceedances.to_zarr(monthly_exceedances_path)
         
         aggregated_data = aggregated_data.sel(time=slice(an_start, an_end))
         

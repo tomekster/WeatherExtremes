@@ -1,10 +1,10 @@
 import ftplib
 import os
 
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
 # Load the environment variables from .env file
-load_dotenv()
+# load_dotenv()
 
 class FTP:
     def __init__(self, server=os.getenv('FTP_SERVER'), uname=os.getenv('FTP_UNAME'), pwd=os.getenv('FTP_PWD')):

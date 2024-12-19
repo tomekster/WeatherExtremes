@@ -5,26 +5,34 @@ from tqdm import tqdm
 import itertools
 
 if __name__ == '__main__':
-    # zarr_path = 'data/michaels_t2_single_arr_mean_zarr_1959-11-01_2021-02-01.zarr'
-    zarr_path = 'data/daily_max_wind_speed_1959_2021.zarr'
+    # zarr_path = 'data/daily_max_wind_speed_1959_2021.zarr'
+    # zarr_path = '/ERA5/weatherbench2_original'
     
-
     # Fixed across runs
+    # ref_per_start = cftime.DatetimeNoLeap(1995, 1, 1) # Must be 1st Jan
+    # ref_per_end = cftime.DatetimeNoLeap(2004, 12, 31) # Must be 31st Dec
+    # an_start = cftime.DatetimeNoLeap(2005, 1, 1) # Must be 1st Jan
+    # an_end = cftime.DatetimeNoLeap(2014, 12, 31) # Must be 31st Dec
+
     ref_per_start = cftime.DatetimeNoLeap(1960, 1, 1) # Must be 1st Jan
     ref_per_end = cftime.DatetimeNoLeap(1989, 12, 31) # Must be 31st Dec
     an_start = cftime.DatetimeNoLeap(1960, 1, 1) # Must be 1st Jan
     an_end = cftime.DatetimeNoLeap(2019, 12, 31) # Must be 31st Dec
     
     # Parameter configurations
-    # var = 'daily_mean_2m_temperature'
-    var = '10m_wind_speed'
+    zarr_path = 'data/michaels_t2_single_arr_mean_zarr_1959-11-01_2021-02-01.zarr'
+    var = 'daily_mean_2m_temperature'
     aggregations = [AGG.MAX]
     agg_windows = [1]
-    perc_boosting_windows = [5]
+    perc_boosting_windows = [11]
+    percentiles = [0.90]
     
-    # Percentiles to calculate
-    # percentiles = [0.9, 0.95, 0.99]
-    percentiles = [0.99]
+    # zarr_path = '/weather/data/10m_wind_speed.zarr'
+    # var = '10m_wind_speed'
+    # aggregations = [AGG.MAX]
+    # agg_windows = [1]
+    # perc_boosting_windows = [5]
+    # percentiles = [0.99]
     
     cartesian_product = itertools.product(aggregations, agg_windows, perc_boosting_windows)
 
