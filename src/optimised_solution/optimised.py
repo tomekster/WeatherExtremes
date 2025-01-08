@@ -62,14 +62,14 @@ def calculate_slopes(monthly_exceedances):
     plt.show()
 
 def optimised(params, input_zarr_path):
-    for percentile in params['percentiles']:
-        experiment = Experiment(params, input_zarr_path, percentile)
-        experiment.calculate_percentile_scores()
-        
     # for percentile in params['percentiles']:
     #     experiment = Experiment(params, input_zarr_path, percentile)
-    #     percentiles = experiment.calculate_percentiles()
+    #     experiment.calculate_percentile_scores()
         
-    #     # monthly_exceedances = read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles)
-    #     # calculate_slopes(monthly_exceedances)
+    for percentile in params['percentiles']:
+        experiment = Experiment(params, input_zarr_path, percentile)
+        percentiles = experiment.calculate_percentiles()
+        
+        # monthly_exceedances = read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles)
+        # calculate_slopes(monthly_exceedances)
     
