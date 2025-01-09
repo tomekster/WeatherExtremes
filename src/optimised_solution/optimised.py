@@ -7,14 +7,7 @@ import matplotlib.pyplot as plt
 
 from optimised_solution.Experiment import Experiment
 
-# TODO: replace monthly 1M with any bucket size
-def read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles):
-    # CALCULATE MONTHLY EXCEEDANCES 
-    if os.path.exists(monthly_exceedances_path):
-        print(f"The monthly exceedances file exists. Loading from the file {monthly_exceedances_path}")
-        return xr.open_zarr(monthly_exceedances_path)
-        
-    print("Monthly exceedances file not found. Calculating exceedances")
+def calcluate_exceedances(an_start, an_end, percentiles):
     aggregated_data = aggregated_data.sel(time=slice(an_start, an_end))
     print('Aggregated Data', aggregated_data)
     
@@ -25,6 +18,17 @@ def read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_e
     threshhold_da = xr.DataArray(percentiles, dims=["dayofyear", 'latitude', 'longitude'])
     exceedances_doy = (aggregated_data_doy > threshhold_da)
     exceedances_doy = exceedances_doy.chunk({"time": -1})
+    return exceedances_doy
+
+# TODO: replace monthly 1M with any bucket size
+def read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles):
+    # CALCULATE MONTHLY EXCEEDANCES 
+    if os.path.exists(monthly_exceedances_path):
+        print(f"The monthly exceedances file exists. Loading from the file {monthly_exceedances_path}")
+        return xr.open_zarr(monthly_exceedances_path)    
+    print("Monthly exceedances file not found. Calculating exceedances")
+    
+    exceedances_doy = calcluate_exceedances(an_start, an_end, percentiles)
     
     monthly_exceedances = exceedances_doy.resample(time="1M").sum(dim="time")
     
@@ -62,14 +66,14 @@ def calculate_slopes(monthly_exceedances):
     plt.show()
 
 def optimised(params, input_zarr_path):
+    #for percentile in params['percentiles']:
+    #    experiment = Experiment(params, input_zarr_path, percentile)
+    #    experiment.calculate_percentile_scores()
+        
     for percentile in params['percentiles']:
         experiment = Experiment(params, input_zarr_path, percentile)
-        experiment.calculate_percentile_scores()
+        percentiles = experiment.calculate_percentiles()
         
-    # for percentile in params['percentiles']:
-    #     experiment = Experiment(params, input_zarr_path, percentile)
-    #     percentiles = experiment.calculate_percentiles()
-        
-    #     # monthly_exceedances = read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles)
-    #     # calculate_slopes(monthly_exceedances)
+        # monthly_exceedances = read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles)
+        # calculate_slopes(monthly_exceedances)
     

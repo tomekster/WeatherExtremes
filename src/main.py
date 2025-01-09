@@ -15,10 +15,10 @@ full_run_params = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
                          an_end=cftime.DatetimeNoLeap(2019, 12, 31),
                          zarr_path='data/michaels_t2_single_arr_mean_zarr_1959-11-01_2021-02-01.zarr',
                          var='daily_mean_2m_temperature',
-                         aggregations=[AGG.MAX],
-                         agg_windows=[1],
-                         perc_boosting_windows=[11],
-                         percentiles=[0.95])
+                         aggregations=[AGG.MEAN],
+                         agg_windows=[1,3,5],
+                         perc_boosting_windows=[1,3,5],
+                         percentiles=[0.9, 0.95, 0.97, 0.99])
 
 local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
                          ref_end=cftime.DatetimeNoLeap(1994, 12, 31),
@@ -33,8 +33,8 @@ local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
 
 if __name__ == '__main__':
     ### Full 1960-1989 reference period and 1990-2019 ananlysis period
-    # cfg = full_run_params
-    cfg =  local_run_params
+    cfg = full_run_params
+    #cfg =  local_run_params
     
     cartesian_product = itertools.product(cfg.aggregations, cfg.agg_windows, cfg.perc_boosting_windows)
 
