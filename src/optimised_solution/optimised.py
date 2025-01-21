@@ -7,19 +7,6 @@ import matplotlib.pyplot as plt
 
 from optimised_solution.Experiment import Experiment
 
-def calcluate_exceedances(an_start, an_end, percentiles):
-    aggregated_data = aggregated_data.sel(time=slice(an_start, an_end))
-    print('Aggregated Data', aggregated_data)
-    
-    assert aggregated_data.shape[0] % percentiles.shape[0] == 0, f"{aggregated_data.shape}, {percentiles.shape}"
-    aggregated_data_doy = aggregated_data.groupby('time.dayofyear')
-    print('Aggregated Data DOY', aggregated_data_doy)
-    
-    threshhold_da = xr.DataArray(percentiles, dims=["dayofyear", 'latitude', 'longitude'])
-    exceedances_doy = (aggregated_data_doy > threshhold_da)
-    exceedances_doy = exceedances_doy.chunk({"time": -1})
-    return exceedances_doy
-
 # TODO: replace monthly 1M with any bucket size
 def read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles):
     # CALCULATE MONTHLY EXCEEDANCES 
@@ -73,7 +60,12 @@ def optimised(params, input_zarr_path):
     for percentile in params['percentiles']:
         experiment = Experiment(params, input_zarr_path, percentile)
         percentiles = experiment.calculate_percentiles()
+        exceedances = experiment.calcluate_exceedances()
         
+        selected_pairs = [(549, 754), (511, 230), (224, 794)]
+        for lat, lon in selected_pairs:
+            print(lat,lon)
+            print(exceedances.isel(latitude=lat, longitude=lon).values.tolist())
         # monthly_exceedances = read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_end, percentiles)
         # calculate_slopes(monthly_exceedances)
     

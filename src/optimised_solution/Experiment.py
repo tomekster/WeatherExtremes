@@ -237,3 +237,23 @@ class Experiment:
         
         print(pre_perc_zarr)
         
+    def calcluate_exceedances(self):
+        data = xr.open_zarr(self.input_zarr_path)[self.var]
+        
+        aggregated_data = self.aggregate(data)
+        aggregated_data = aggregated_data.sel(time=slice(self.an_start, self.an_end))
+        
+        percentiles = self.calculate_percentiles()        
+        
+        print('Aggregated Data', aggregated_data)
+        
+        assert aggregated_data.shape[0] % percentiles.shape[0] == 0, f"{aggregated_data.shape}, {percentiles.shape}"
+        aggregated_data_doy = aggregated_data.groupby('time.dayofyear')
+        print('Aggregated Data DOY', aggregated_data_doy)
+        
+        threshhold_da = xr.DataArray(percentiles, dims=["dayofyear", 'latitude', 'longitude'])
+        exceedances_doy = (aggregated_data_doy > threshhold_da)
+        exceedances_doy = exceedances_doy.chunk({"time": -1})
+        exceedances_doy.resample(time="1D").sum(dim="time")
+        return exceedances_doy
+        
