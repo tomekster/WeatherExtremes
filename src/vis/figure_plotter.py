@@ -1,12 +1,7 @@
 import itertools
 import numpy as np
 import matplotlib.pyplot as plt
-
-LAT_LON = {
-  'zurich': (549, 754), # (47.25, 8.5)
-  'sf': (511, 230), # (37.75, -122.5)
-  'cape': (224, 794), # (-34.0, 18.5)
-}
+from constants import LAT_LON
 
 def grid_index_to_lat_long(pair):
     x, y = pair

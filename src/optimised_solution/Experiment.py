@@ -7,11 +7,11 @@ import time
 from tqdm import tqdm
 import dask.array as da
 import numpy as np
-from scipy.stats import percentileofscore
+import pandas as pd
 
 class Experiment:
     
-    def __init__(self, params, input_zarr_path, percentile, lat_size=721, lon_size=1440):
+    def __init__(self, params, raw_data_path, input_zarr_path, percentile, lat_size=721, lon_size=1440):
         self.input_zarr_path = input_zarr_path
         
         # PARAMETERS INITIALIZATION
@@ -43,8 +43,54 @@ class Experiment:
         self.monthly_exceedances_path = os.path.join(self.experiment_dir, f"monthly_exceedances_{perc_string}.zarr")
     
         os.makedirs(self.experiment_dir, exist_ok=True)
+        
+        if raw_data_path:
+            if 'ERA5' in raw_data_path:
+                Experiment.calculate_daily_aggregation_for_era5(
+                    raw_data_path,
+                    min(self.agg_start, self.ref_start),
+                    max(self.agg_start, self.ref_start),
+                    self.var,
+                    str(self.aggregation).lower(),
+                    input_zarr_path
+                )
+            elif 'HadGHCND' in raw_data_path:
+                data = xr.open_zarr(raw_data_path)
+                print(data)
+                if 'HadGHCND' in input_zarr_path:
+                    # Get the variable data array first
+                    data_array = data[self.var]
+                    # Create zero arrays for padding using the DataArray dimensions
+                    zeros = np.zeros((self.agg_window, data_array.sizes['latitude'], data_array.sizes['longitude']))
+                    
+                    # Create DataArrays with the same coordinates except time
+                    time_before = pd.date_range(end=data_array.time[0].values, periods=self.agg_window, freq='D')
+                    time_after = pd.date_range(start=data_array.time[-1].values + pd.Timedelta(days=1), periods=self.agg_window, freq='D')
+                    
+                    padding_before = xr.DataArray(zeros, 
+                                                dims=['time', 'latitude', 'longitude'],
+                                                coords={'time': time_before, 
+                                                       'latitude': data_array.latitude, 
+                                                       'longitude': data_array.longitude})
+                    padding_after = xr.DataArray(zeros,
+                                               dims=['time', 'latitude', 'longitude'], 
+                                               coords={'time': time_after, 
+                                                      'latitude': data_array.latitude, 
+                                                      'longitude': data_array.longitude})
+                    
+                    # Concatenate the padding with the data array (not the dataset)
+                    padded_data = xr.concat([padding_before, data_array, padding_after], dim='time')
+                    
+                    # Create a new dataset with the padded data array
+                    output_dataset = xr.Dataset({self.var: padded_data})
+                    # Explicitly set uniform chunks before saving
+                    output_dataset = output_dataset.chunk({'time': -1, 'latitude': 'auto', 'longitude': 'auto'})
+                    output_dataset.to_zarr(input_zarr_path.replace('.zarr', '_padded.zarr'))
+            else:
+                raise "Unsupported raw data path"
 
     def aggregate(self, data):
+        
         print("Converting to no-leap calendar")
         data = data.convert_calendar('noleap')
         
@@ -196,17 +242,6 @@ class Experiment:
         print(f"Saving percentiles to {self.percentiles_path}")
         np.save(self.percentiles_path.removesuffix('.npy'), percentiles)
         return percentiles
-    
-    def _calculate_perc_scores(self, pre_perc_zarr, an_agg_data):
-        an_agg_data.sel(time=slice(self.an_start, self.an_end))
-        doy_grouped = an_agg_data.groupby('time.dayofyear')
-        print(doy_grouped[1])
-        for doy in tqdm(range(365), leave=False):
-            for year in range(10):
-                pre_percentile_window = pre_perc_zarr[self.n_years * doy: self.n_years * (self.perc_boost + doy)]
-                scores = percentileofscore(pre_percentile_window, doy_grouped[doy+1], kind='mean')
-            print(scores)
-        print(an_agg_data)
             
     def load_percentiles(self):
         path = self.percentiles_path
@@ -224,18 +259,6 @@ class Experiment:
         percentiles = self.load_percentiles() if os.path.exists(self.percentiles_path) else self._calculate_percentiles(pre_perc_zarr)
         
         return percentiles
-        
-    def calculate_percentile_scores(self):
-        
-        data = xr.open_zarr(self.input_zarr_path)[self.var]
-        
-        aggregated_data = self.aggregate(data)
-        
-        pre_perc_zarr = self.load_pre_perc_zarr() if os.path.exists(self.pre_percentile_zarr_path) else self.compute_pre_perc_zarr(aggregated_data)
-        
-        self._calculate_perc_scores(pre_perc_zarr, aggregated_data)
-        
-        print(pre_perc_zarr)
         
     def calcluate_exceedances(self):
         data = xr.open_zarr(self.input_zarr_path)[self.var]
@@ -256,4 +279,59 @@ class Experiment:
         exceedances_doy = exceedances_doy.chunk({"time": -1})
         exceedances_doy.resample(time="1D").sum(dim="time")
         return exceedances_doy
+        
+    @staticmethod
+    def calculate_daily_aggregation_for_era5(input_zarr_path, start_date, end_date, variable, aggregation_method, output_zarr_path):
+        """
+        Calculate daily aggregations (min/max/avg) for ERA5 data and save to zarr.
+        
+        Args:
+            input_zarr_path (str): Path to input ERA5 zarr dataset
+            start_date (datetime): Start date for the analysis
+            end_date (datetime): End date for the analysis
+            variable (str): Name of the variable to process
+            aggregation_method (str): One of 'min', 'max', 'mean'
+            output_zarr_path (str): Path where to save the output zarr
+        """
+        # Read the data
+        data = xr.open_zarr(input_zarr_path)[variable]
+        
+        # Verify we have data
+        if data.sizes['time'] == 0:
+            raise ValueError(f"No data found in zarr file at {input_zarr_path}")
+        
+        print(f"Loaded data with time range: {data.time[0].values} to {data.time[-1].values}")
+        
+        # Convert to no-leap calendar first
+        data = data.convert_calendar('noleap')
+        
+        print(start_date, end_date)
+        # Now select the time slice with converted dates
+        data = data.sel(time=slice(start_date, end_date))
+        
+        if data.sizes['time'] == 0:
+            raise ValueError(f"No data found for time range {start_date} to {end_date}")
+        
+        # Calculate daily aggregation using groupby instead of resample for more robust handling
+        daily_data = data.groupby('time.date')
+        
+        if aggregation_method.lower() == 'min':
+            result = daily_data.min()
+        elif aggregation_method.lower() == 'max':
+            result = daily_data.max()
+        elif aggregation_method.lower() in ['mean', 'avg']:
+            result = daily_data.mean()
+        else:
+            raise ValueError(f"Invalid aggregation method: {aggregation_method}. Must be one of: min, max, mean")
+        
+        # Ensure consistent dimension names
+        if 'lat' in result.dims:
+            result = result.rename({"lat": "latitude"})
+        if 'lon' in result.dims:
+            result = result.rename({"lon": "longitude"})
+        
+        # Save to zarr
+        result.to_zarr(output_zarr_path, mode='w')
+        
+        return result
         
