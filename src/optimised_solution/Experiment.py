@@ -11,7 +11,7 @@ import pandas as pd
 
 class Experiment:
     
-    def __init__(self, params, raw_data_path, input_zarr_path, percentile, lat_size=721, lon_size=1440):
+    def __init__(self, params, raw_data_path, input_zarr_path, percentile):
         self.input_zarr_path = input_zarr_path
         
         # PARAMETERS INITIALIZATION
@@ -31,11 +31,11 @@ class Experiment:
         self.agg_start = min(self.ref_start, self.an_start) - (self.half_agg_days + self.half_perc_boost_days)
         self.agg_end = max(self.ref_end, self.an_end) + (self.half_agg_days + self.half_perc_boost_days)
         
-        self.lat_size=lat_size
-        self.lon_size=lon_size
+        self.lat_size=params['lat_size']
+        self.lon_size=params['lon_size']
         
         # EXPERIMENT PATHS AND DIRECTORY INITIALIZATION
-        self.experiment_dir = f"{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{params['aggregation_window']}_percboost_{self.perc_boost}"
+        self.experiment_dir = f"experiments/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{params['aggregation_window']}_percboost_{self.perc_boost}"
         self.pre_percentile_zarr_path = os.path.join(self.experiment_dir, 'pre_precentile.zarr')
         
         perc_string = str(self.percentile).replace('.','_')
@@ -46,52 +46,28 @@ class Experiment:
         
         if raw_data_path:
             if 'ERA5' in raw_data_path:
-                Experiment.calculate_daily_aggregation_for_era5(
-                    raw_data_path,
-                    min(self.agg_start, self.ref_start),
-                    max(self.agg_start, self.ref_start),
-                    self.var,
-                    str(self.aggregation).lower(),
-                    input_zarr_path
-                )
+                if not os.path.exists(input_zarr_path):
+                    Experiment.calculate_daily_aggregation_for_era5(
+                        raw_data_path,
+                        self.agg_start,
+                        self.agg_end,
+                        self.var,
+                        str(self.aggregation).lower(),
+                        input_zarr_path
+                    )
             elif 'HadGHCND' in raw_data_path:
-                data = xr.open_zarr(raw_data_path)
-                print(data)
-                if 'HadGHCND' in input_zarr_path:
-                    # Get the variable data array first
-                    data_array = data[self.var]
-                    # Create zero arrays for padding using the DataArray dimensions
-                    zeros = np.zeros((self.agg_window, data_array.sizes['latitude'], data_array.sizes['longitude']))
-                    
-                    # Create DataArrays with the same coordinates except time
-                    time_before = pd.date_range(end=data_array.time[0].values, periods=self.agg_window, freq='D')
-                    time_after = pd.date_range(start=data_array.time[-1].values + pd.Timedelta(days=1), periods=self.agg_window, freq='D')
-                    
-                    padding_before = xr.DataArray(zeros, 
-                                                dims=['time', 'latitude', 'longitude'],
-                                                coords={'time': time_before, 
-                                                       'latitude': data_array.latitude, 
-                                                       'longitude': data_array.longitude})
-                    padding_after = xr.DataArray(zeros,
-                                               dims=['time', 'latitude', 'longitude'], 
-                                               coords={'time': time_after, 
-                                                      'latitude': data_array.latitude, 
-                                                      'longitude': data_array.longitude})
-                    
-                    # Concatenate the padding with the data array (not the dataset)
-                    padded_data = xr.concat([padding_before, data_array, padding_after], dim='time')
-                    
-                    # Create a new dataset with the padded data array
-                    output_dataset = xr.Dataset({self.var: padded_data})
-                    # Explicitly set uniform chunks before saving
-                    output_dataset = output_dataset.chunk({'time': -1, 'latitude': 'auto', 'longitude': 'auto'})
-                    output_dataset.to_zarr(input_zarr_path.replace('.zarr', '_padded.zarr'))
+                pass
             else:
                 raise "Unsupported raw data path"
 
     def aggregate(self, data):
+        try:
+            assert not np.isnan(data.values).any()
+        except:
+            raise Exception(f"The data passed to aggregation function contains NaNs")
         
         print("Converting to no-leap calendar")
+        print(data)
         data = data.convert_calendar('noleap')
         
         data = data.sel(time=slice(self.agg_start, self.agg_end))
@@ -293,6 +269,8 @@ class Experiment:
             aggregation_method (str): One of 'min', 'max', 'mean'
             output_zarr_path (str): Path where to save the output zarr
         """
+        print(f"Converting hourly ERA5 values to daily values for range: {start_date} {end_date}")
+
         # Read the data
         data = xr.open_zarr(input_zarr_path)[variable]
         
@@ -305,7 +283,6 @@ class Experiment:
         # Convert to no-leap calendar first
         data = data.convert_calendar('noleap')
         
-        print(start_date, end_date)
         # Now select the time slice with converted dates
         data = data.sel(time=slice(start_date, end_date))
         
@@ -313,16 +290,20 @@ class Experiment:
             raise ValueError(f"No data found for time range {start_date} to {end_date}")
         
         # Calculate daily aggregation using groupby instead of resample for more robust handling
-        daily_data = data.groupby('time.date')
+        daily_data = data.groupby(group=data.time.dt.floor('D'))
+
         
-        if aggregation_method.lower() == 'min':
+        agg_methd = aggregation_method.split('.')[-1].lower()
+        if agg_methd == 'min':
             result = daily_data.min()
-        elif aggregation_method.lower() == 'max':
+        elif agg_methd == 'max':
             result = daily_data.max()
-        elif aggregation_method.lower() in ['mean', 'avg']:
+        elif agg_methd in ['mean', 'avg']:
             result = daily_data.mean()
         else:
             raise ValueError(f"Invalid aggregation method: {aggregation_method}. Must be one of: min, max, mean")
+        
+        result = result.rename({'floor': 'time'})
         
         # Ensure consistent dimension names
         if 'lat' in result.dims:
@@ -330,6 +311,7 @@ class Experiment:
         if 'lon' in result.dims:
             result = result.rename({"lon": "longitude"})
         
+        print(f"Converted, saving to {output_zarr_path}")
         # Save to zarr
         result.to_zarr(output_zarr_path, mode='w')
         
