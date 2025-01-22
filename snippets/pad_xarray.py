@@ -18,7 +18,7 @@ original_data = {var: ds[var].values for var in ds.data_vars}
 time_size, lat_size, lon_size = len(ds['time']), len(ds['latitude']), len(ds['longitude'])
 
 # Create arrays for the new padded time
-time_before = [ds['time'].values[0] - np.timedelta64(time_delta, 'D') for time_delta in range(1, padded_days +1)]
+time_before = [ds['time'].values[0] - np.timedelta64(time_delta, 'D') for time_delta in range(padded_days,0,-1)]
 time_after = [ds['time'].values[-1] + np.timedelta64(time_delta, 'D') for time_delta in range(1, padded_days +1)]
 padded_times = np.concatenate([time_before, ds['time'].values, time_after])
 
@@ -48,7 +48,7 @@ new_ds = xr.Dataset(
 )
 
 #23739 = len(original_data)
-chunking = {'latitude':1, 'longitude':1, 'time':23739 + 2 * padded_days}
+chunking = {'latitude':73, 'longitude':96, 'time':23739 + 2 * padded_days}
 # # Re-chunk the new dataset
 new_ds = new_ds.chunk(chunking)
 new_ds.to_zarr(out_path, mode='w', consolidated=True)
