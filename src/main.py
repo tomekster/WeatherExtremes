@@ -42,9 +42,9 @@ local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
 # year_end = 2020
 # ref_end = 2011
 
-year_start = 1961
-year_end = 1962
-ref_end = 1962
+year_start = 1960
+year_end = 2020
+ref_end = 2011
 
 compare_perkins_2012 = Params(ref_start=cftime.DatetimeNoLeap(year_start, 1, 1),
                          ref_end=cftime.DatetimeNoLeap(ref_end, 12, 31), # Match the paper

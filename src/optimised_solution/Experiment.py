@@ -61,6 +61,8 @@ class Experiment:
                 raise "Unsupported raw data path"
 
     def aggregate(self, data):
+        
+        print("Aggregating, checking if there are no NaNs in the data")
         try:
             assert not np.isnan(data.values).any()
         except:
