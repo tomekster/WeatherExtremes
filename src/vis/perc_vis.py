@@ -48,6 +48,17 @@ def visualize_data(file_path: str, t: int, save_path: str, cmap: str = 'viridis'
     
     plt.savefig(save_path, bbox_inches='tight', dpi=300)
     plt.close()
+
+if __name__ == "__main__":
+    import argparse
     
+    parser = argparse.ArgumentParser(description='Visualise the Percentiles file.')
+    parser.add_argument('path', type=str, help='Percentiles path')
+    parser.add_argument('time', type=int, 
+                        help='Time index to be visualised')
+    parser.add_argument('outfile', type=str, 
+                        help='Path to the output file', default= 'percentiles_plot.png')
+
+    args = parser.parse_args()
     
-visualize_data('/weather/WeatherExtremes/experiments/2m_temperature_1960_1961_AGG.MAX_aggrwindow_1_percboost_15/percentiles_0_9.npy', 0, 'percentiles_plot.png')
+    visualize_data(args.path, args.time, args.outfile)

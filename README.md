@@ -1,5 +1,13 @@
 # WeatherExtremes
 
+# Available Scripts
+
+./src/preprocess - preprocess weatherbench2_original data to daily values format expected by WeatherExtremes pipeline
+./src/main.py - basic experiments: configure the dataset, aggregations, reference period, analysis period, percentiles, etc. and produce the percentiles file and the exceedances file
+./app.py - visualisation tool for exploring how percentiles change in different locations on earth
+
+./serc/vis/perc_vis.py - takes percentiles file path, timestep, and outpath as input and visualises the percentiles  
+
 
 # Installation:
 External dependencies for Cartopy 

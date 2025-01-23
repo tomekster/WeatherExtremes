@@ -140,6 +140,7 @@ class Experiment:
         
         # Read the data and group by Day Of Year
         agg_data = agg_data.sel(time=slice(perc_start, perc_end))
+        #TODO(tsternal): add tests and try replacing groupby with array slicing
         doy_grouped = agg_data.groupby('time.dayofyear')
         
         prefix_to_append_index=prefix_to_append
