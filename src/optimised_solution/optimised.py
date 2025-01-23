@@ -5,7 +5,7 @@ import os
 from scipy.stats import linregress
 import matplotlib.pyplot as plt
 
-from optimised_solution.Experiment import Experiment
+from src.experiment import Experiment
 from constants import LAT_LON
 
 # TODO: replace monthly 1M with any bucket size
@@ -13,7 +13,7 @@ def read_or_compute_monthly_exceedances(monthly_exceedances_path, an_start, an_e
     # CALCULATE MONTHLY EXCEEDANCES 
     if os.path.exists(monthly_exceedances_path):
         print(f"The monthly exceedances file exists. Loading from the file {monthly_exceedances_path}")
-        return xr.open_zarr(monthly_exceedances_path)    
+        return xr.open_zarr(monthly_exceedances_path)
     print("Monthly exceedances file not found. Calculating exceedances")
     
     exceedances_doy = calcluate_exceedances(an_start, an_end, percentiles)
@@ -53,15 +53,14 @@ def calculate_slopes(monthly_exceedances):
     plt.ylabel("Latitude")
     plt.show()
 
-def optimised(params, raw_data_path, input_zarr_path):
+def optimised(cfg):
     # for percentile in params['percentiles']:
     #     experiment = Experiment(params, input_zarr_path, percentile)
     #     experiment.calculate_percentile_scores()
         
-    for percentile in params['percentiles']:
-        experiment = Experiment(params, raw_data_path, input_zarr_path, percentile)
-        percentiles = experiment.calculate_percentiles()
-        exceedances = experiment.calcluate_exceedances()
+    for percentile in cfg.percentiles:
+        Experiment(cfg, percentile).run()
+        
         
         # for _cityname, (lat, lon) in LAT_LON.items():
         #     print(lat,lon)

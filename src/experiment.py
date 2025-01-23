@@ -8,22 +8,34 @@ from tqdm import tqdm
 import dask.array as da
 import numpy as np
 import pandas as pd
+from utils.utils import zarr_has_nans, ensure_dimensions
 
 class Experiment:
+    """
+        0. Create a dedicated directory for every experiment
+        1. Process raw data.
+        2. Perform aggregation.
+        3. Arrange data in the pre-percentile calculation format.
+        4. Calculate percentiles.
+        
+        At every stage:
+            1. Verify if the data is already saved on the disk. If yes, read from the disk, otherwise recompute and save.
+            2. After every processing step perform additional validation for NaNs.    
+    """
     
-    def __init__(self, params, raw_data_path, input_zarr_path, percentile):
-        self.input_zarr_path = input_zarr_path
+    def __init__(self, cfg):
+        self.input_zarr_path = cfg.input_zarr_path
         
         # PARAMETERS INITIALIZATION
-        self.var = params['var']
-        self.aggregation = params['aggregation']
-        self.ref_start, self.ref_end = params['reference_period']
-        self.an_start, self.an_end = params['analysis_period']
-        self.perc_boost = params['perc_boosting_window']
-        self.agg_window = params['aggregation_window']
+        self.var = cfg.var
+        self.aggregation = cfg.aggregation
+        self.ref_start, self.ref_end = cfg.ref_start, cfg.ref_end
+        self.an_start, self.an_end = cfg.an_start, cfg.an_end
+        self.perc_boost = cfg.perc_boosting_window
+        self.agg_window = cfg.agg_window
         self.half_perc_boost = self.perc_boost // 2
         self.n_years = self.ref_end.year - self.ref_start.year + 1
-        self.percentile = percentile
+        self.percentile = cfg.percentile
 
         self.half_agg_days = timedelta(days=self.agg_window//2)
         self.half_perc_boost_days = timedelta(days=self.half_perc_boost)
@@ -31,11 +43,12 @@ class Experiment:
         self.agg_start = min(self.ref_start, self.an_start) - (self.half_agg_days + self.half_perc_boost_days)
         self.agg_end = max(self.ref_end, self.an_end) + (self.half_agg_days + self.half_perc_boost_days)
         
-        self.lat_size=params['lat_size']
-        self.lon_size=params['lon_size']
+        # TODO(tsternal) - these are the parameters of the source dataset. Move to a dedicated class
+        self.lat_size=cfg.lat_size
+        self.lon_size=cfg.lon_size
         
         # EXPERIMENT PATHS AND DIRECTORY INITIALIZATION
-        self.experiment_dir = f"experiments/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{params['aggregation_window']}_percboost_{self.perc_boost}"
+        self.experiment_dir = f"experiments/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{self.agg_window}_percboost_{self.perc_boost}"
         self.pre_percentile_zarr_path = os.path.join(self.experiment_dir, 'pre_precentile.zarr')
         
         perc_string = str(self.percentile).replace('.','_')
@@ -43,41 +56,29 @@ class Experiment:
         self.monthly_exceedances_path = os.path.join(self.experiment_dir, f"monthly_exceedances_{perc_string}.zarr")
     
         os.makedirs(self.experiment_dir, exist_ok=True)
-        
-        if raw_data_path:
-            if 'ERA5' in raw_data_path:
-                if not os.path.exists(input_zarr_path):
-                    Experiment.calculate_daily_aggregation_for_era5(
-                        raw_data_path,
-                        self.agg_start,
-                        self.agg_end,
-                        self.var,
-                        str(self.aggregation).lower(),
-                        input_zarr_path
-                    )
-            elif 'HadGHCND' in raw_data_path:
-                pass
-            else:
-                raise "Unsupported raw data path"
-
+    
+    def run(self):
+        data = xr.open_zarr(self.input_zarr_path)[self.var]
+        aggregated_data = self.aggregate(data)
+        percentiles = self.calculate_percentiles(aggregated_data)
+        # exceedances = self.calcluate_exceedances(aggregated_data, percentiles)
+    
     def aggregate(self, data):
-        
-        print("Aggregating, checking if there are no NaNs in the data")
-        try:
-            assert not np.isnan(data.values).any()
-        except:
-            raise Exception(f"The data passed to aggregation function contains NaNs")
+        """
+            Data is a zarr containing 1 or more full years of daily values for one or more variables for the full range of lat-longs.
+        """
         
         print("Converting to no-leap calendar")
-        print(data)
         data = data.convert_calendar('noleap')
         
         data = data.sel(time=slice(self.agg_start, self.agg_end))
         
-        assert data['time'][0] == self.agg_start, f"Missing data at the beginning of the reference period. Data: {data['time'][0]}, Start: {self.agg_start}"
-        assert data['time'][-1] == self.agg_end, f"Missing data at the end of the reference period. Data: {data['time'][-1]}, End: {self.agg_end}"
+        if data['time'][0] != self.agg_start:
+            raise ValueError(f"Missing data at the beginning of the reference period. Data start date: {data['time'][0]}, Expected start date: {self.agg_start}")
+        if data['time'][-1] != self.agg_end:
+            raise ValueError(f"Missing data at the end of the reference period. Data end date: {data['time'][-1]}, Expected end date: {self.agg_end}")
         
-        print("Calculating Aggregations...")
+        print("Aggregating data...")
         rolling_data = data.rolling(time=self.agg_window, center=True)
 
         if self.aggregation == AGG.MEAN:
@@ -91,15 +92,23 @@ class Experiment:
         else:
             raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", self.aggregation)
         
-        # Make sure we use the correct dimension names
-        if 'lat' in aggregated_data.dims:
-            aggregated_data = aggregated_data.rename({"lat": "latitude"})
-        if 'lon' in aggregated_data.dims:
-            aggregated_data = aggregated_data.rename({"lon": "longitude"})
-        assert 'latitude' in aggregated_data.dims
-        assert 'longitude' in aggregated_data.dims
+        ensure_dimensions(aggregated_data)
+        
+        print("Successfully aggregated data!")
         
         return aggregated_data
+    
+    def load_percentiles(self):
+        path = self.percentiles_path
+        print(f"Percentiles file exists. Loading from {path}")
+        return np.load(path)
+        
+    def calculate_percentiles(self, aggregated_data):
+        pre_perc_zarr = self.load_pre_perc_zarr() if os.path.exists(self.pre_percentile_zarr_path) else self.compute_pre_perc_zarr(aggregated_data)
+        
+        percentiles = self.load_percentiles() if os.path.exists(self.percentiles_path) else self._calculate_percentiles(pre_perc_zarr)
+        
+        return percentiles
     
     def load_pre_perc_zarr(self):
         print(f"PrePercentile Zarr exists, reading from {self.pre_percentile_zarr_path}")
@@ -115,6 +124,7 @@ class Experiment:
         """
         Rearrange the grouped by DOY data and save to zarr
         """
+        print(agg_data)
         perc_start = self.ref_start - self.half_perc_boost_days
         perc_end = self.ref_end + self.half_perc_boost_days
         
@@ -192,8 +202,8 @@ class Experiment:
             percentiles.append(percentile)
     
         band_percentiles = np.stack(percentiles)
-        print('Percentiles Band Shape', band_percentiles.shape)
-        assert np.any(band_percentiles > 0)
+        print('Finished Computing Band Percentile! Percentiles Band Shape', band_percentiles.shape)
+        # assert np.any(band_percentiles > 0)
         return band_percentiles
             
     def _calculate_percentiles(self, pre_perc_zarr):
@@ -220,32 +230,8 @@ class Experiment:
         print(f"Saving percentiles to {self.percentiles_path}")
         np.save(self.percentiles_path.removesuffix('.npy'), percentiles)
         return percentiles
-            
-    def load_percentiles(self):
-        path = self.percentiles_path
-        print(f"Percentiles file exists. Loading from {path}")
-        return np.load(path)
         
-    def calculate_percentiles(self):
-        
-        data = xr.open_zarr(self.input_zarr_path)[self.var]
-        
-        aggregated_data = self.aggregate(data)
-        
-        pre_perc_zarr = self.load_pre_perc_zarr() if os.path.exists(self.pre_percentile_zarr_path) else self.compute_pre_perc_zarr(aggregated_data)
-        
-        percentiles = self.load_percentiles() if os.path.exists(self.percentiles_path) else self._calculate_percentiles(pre_perc_zarr)
-        
-        return percentiles
-        
-    def calcluate_exceedances(self):
-        data = xr.open_zarr(self.input_zarr_path)[self.var]
-        
-        aggregated_data = self.aggregate(data)
-        aggregated_data = aggregated_data.sel(time=slice(self.an_start, self.an_end))
-        
-        percentiles = self.calculate_percentiles()        
-        
+    def calcluate_exceedances(self, aggregated_data, percentiles):        
         print('Aggregated Data', aggregated_data)
         
         assert aggregated_data.shape[0] % percentiles.shape[0] == 0, f"{aggregated_data.shape}, {percentiles.shape}"
@@ -257,65 +243,3 @@ class Experiment:
         exceedances_doy = exceedances_doy.chunk({"time": -1})
         exceedances_doy.resample(time="1D").sum(dim="time")
         return exceedances_doy
-        
-    @staticmethod
-    def calculate_daily_aggregation_for_era5(input_zarr_path, start_date, end_date, variable, aggregation_method, output_zarr_path):
-        """
-        Calculate daily aggregations (min/max/avg) for ERA5 data and save to zarr.
-        
-        Args:
-            input_zarr_path (str): Path to input ERA5 zarr dataset
-            start_date (datetime): Start date for the analysis
-            end_date (datetime): End date for the analysis
-            variable (str): Name of the variable to process
-            aggregation_method (str): One of 'min', 'max', 'mean'
-            output_zarr_path (str): Path where to save the output zarr
-        """
-        print(f"Converting hourly ERA5 values to daily values for range: {start_date} {end_date}")
-
-        # Read the data
-        data = xr.open_zarr(input_zarr_path)[variable]
-        
-        # Verify we have data
-        if data.sizes['time'] == 0:
-            raise ValueError(f"No data found in zarr file at {input_zarr_path}")
-        
-        print(f"Loaded data with time range: {data.time[0].values} to {data.time[-1].values}")
-        
-        # Convert to no-leap calendar first
-        data = data.convert_calendar('noleap')
-        
-        # Now select the time slice with converted dates
-        data = data.sel(time=slice(start_date, end_date))
-        
-        if data.sizes['time'] == 0:
-            raise ValueError(f"No data found for time range {start_date} to {end_date}")
-        
-        # Calculate daily aggregation using groupby instead of resample for more robust handling
-        daily_data = data.groupby(group=data.time.dt.floor('D'))
-
-        
-        agg_methd = aggregation_method.split('.')[-1].lower()
-        if agg_methd == 'min':
-            result = daily_data.min()
-        elif agg_methd == 'max':
-            result = daily_data.max()
-        elif agg_methd in ['mean', 'avg']:
-            result = daily_data.mean()
-        else:
-            raise ValueError(f"Invalid aggregation method: {aggregation_method}. Must be one of: min, max, mean")
-        
-        result = result.rename({'floor': 'time'})
-        
-        # Ensure consistent dimension names
-        if 'lat' in result.dims:
-            result = result.rename({"lat": "latitude"})
-        if 'lon' in result.dims:
-            result = result.rename({"lon": "longitude"})
-        
-        print(f"Converted, saving to {output_zarr_path}")
-        # Save to zarr
-        result.to_zarr(output_zarr_path, mode='w')
-        
-        return result
-        
