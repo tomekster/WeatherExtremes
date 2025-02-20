@@ -7,8 +7,7 @@ from experiment import Experiment
 from recordtype import recordtype
 
 Params = recordtype('Params',['ref_start', 'ref_end', 'an_start', 
-                              'an_end', 'input_zarr_path', 'var', 'aggregation', 'agg_window',
-                              'perc_boosting_window', 'percentile', 'lat_size', 'lon_size', 'seasonality_window'])
+                              'an_end', 'input_zarr_path', 'var', 'aggregation', 'agg_window', 'perc_boosting_window', 'percentile', 'lat_size', 'lon_size', 'seasonality_window', 'output_dir'])
 
 full_run_params = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
                          ref_end=cftime.DatetimeNoLeap(1989, 12, 31),
@@ -38,11 +37,25 @@ local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
                          lon_size=1440,
                          seasonality_window=0)
 
+test_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
+                         ref_end=cftime.DatetimeNoLeap(1990, 12, 31),
+                         an_start=cftime.DatetimeNoLeap(1990, 1, 1),
+                         an_end=cftime.DatetimeNoLeap(1990, 12, 31),
+                         input_zarr_path='/net/litho/atmosdyn2/svoigt/project_extremes/t2mean/zarr_files/michaels_t2_single_arr_mean_zarr_1989_1992.zarr',
+                         var='daily_mean_2m_temperature',
+                         aggregation=AGG.MEAN,
+                         agg_window=3,
+                         perc_boosting_window=3,
+                         percentile=0.9,
+                         lat_size=721, 
+                         lon_size=1440,
+                         output_dir='/net/litho/atmosdyn2/svoigt/project_extremes/percentiles/')
+
 # https://agupubs.onlinelibrary.wiley.com/doi/epdf/10.1029/2012GL053361
 
-year_start = 1960
-year_end = 2020
-ref_end = 2011
+year_start = 1990
+year_end = 1991
+ref_end = 1991
 
 # year_start = 1960
 # year_end = 1962
@@ -59,11 +72,11 @@ compare_perkins_2012 = Params(ref_start=cftime.DatetimeNoLeap(year_start, 1, 1),
                          perc_boosting_window=None,
                          percentile=None,
                          lat_size=721,
-                         lon_size=1440
+                         lon_size=1440,
                          seasonality_window=0)
 
 if __name__ == '__main__':
-    cfg = compare_perkins_2012
+    cfg = test_run_params
     
     # aggregations=[AGG.MEAN]
     # agg_windows=[1,3,5]
