@@ -2,7 +2,6 @@ from enums import AGG
 import cftime
 from tqdm import tqdm
 import itertools
-from collections import namedtuple
 from experiment import Experiment
 from recordtype import recordtype
 
@@ -24,9 +23,9 @@ full_run_params = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
                          seasonality_window=0)
 
 local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
-                         ref_end=cftime.DatetimeNoLeap(1994, 12, 31),
-                         an_start=cftime.DatetimeNoLeap(1995, 1, 1),
-                         an_end=cftime.DatetimeNoLeap(1999, 12, 31),
+                         ref_end=cftime.DatetimeNoLeap(1991, 12, 31),
+                         an_start=cftime.DatetimeNoLeap(1990, 1, 1),
+                         an_end=cftime.DatetimeNoLeap(1991, 12, 31),
                          input_zarr_path='data/michaels_t2_single_arr_mean_zarr_1990_2006.zarr',
                          var='daily_mean_2m_temperature',
                          aggregation=None,
@@ -43,10 +42,10 @@ test_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
                          an_end=cftime.DatetimeNoLeap(1990, 12, 31),
                          input_zarr_path='/net/litho/atmosdyn2/svoigt/project_extremes/t2mean/zarr_files/michaels_t2_single_arr_mean_zarr_1989_1992.zarr',
                          var='daily_mean_2m_temperature',
-                         aggregation=AGG.MEAN,
-                         agg_window=3,
-                         perc_boosting_window=3,
-                         percentile=0.9,
+                         aggregation=None,
+                         agg_window=None,
+                         perc_boosting_window=None,
+                         percentile=None,
                          lat_size=721, 
                          lon_size=1440,
                          output_dir='/net/litho/atmosdyn2/svoigt/project_extremes/percentiles/')
@@ -56,10 +55,6 @@ test_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
 year_start = 1990
 year_end = 1991
 ref_end = 1991
-
-# year_start = 1960
-# year_end = 1962
-# ref_end = 1961
 
 compare_perkins_2012 = Params(ref_start=cftime.DatetimeNoLeap(year_start, 1, 1),
                          ref_end=cftime.DatetimeNoLeap(ref_end, 12, 31), # Match the paper
@@ -77,11 +72,6 @@ compare_perkins_2012 = Params(ref_start=cftime.DatetimeNoLeap(year_start, 1, 1),
 
 if __name__ == '__main__':
     cfg = test_run_params
-    
-    # aggregations=[AGG.MEAN]
-    # agg_windows=[1,3,5]
-    # perc_boosting_windows=[1,3,5]
-    # percentiles=[0.9, 0.95, 0.97, 0.99]
     
     aggregations=[AGG.MAX]
     agg_windows=[1]

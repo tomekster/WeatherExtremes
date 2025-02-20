@@ -47,7 +47,7 @@ class Experiment:
         self.lon_size=cfg.lon_size
         
         # EXPERIMENT PATHS AND DIRECTORY INITIALIZATION
-        self.experiment_dir = f"{cfg.output_dir}/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{self.agg_window}_percboost_{self.perc_boost}"
+        self.experiment_dir = f"experiments/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{self.agg_window}_percboost_{self.perc_boost}"
         self.pre_percentile_zarr_path = os.path.join(self.experiment_dir, 'pre_precentile.zarr')
         
         perc_string = str(self.percentile).replace('.','_')
