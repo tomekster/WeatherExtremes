@@ -7,8 +7,7 @@ import time
 from tqdm import tqdm
 import dask.array as da
 import numpy as np
-import pandas as pd
-from utils.utils import zarr_has_nans, ensure_dimensions
+from utils.utils import ensure_dimensions
 
 class Experiment:
     """
@@ -55,6 +54,7 @@ class Experiment:
         self.percentiles_path = os.path.join(f"{self.experiment_dir}", f"percentiles_{perc_string}.npy")
         self.monthly_exceedances_path = os.path.join(self.experiment_dir, f"monthly_exceedances_{perc_string}.zarr")
     
+        self.seasonality_window = cfg.seasonality_window
         os.makedirs(self.experiment_dir, exist_ok=True)
     
     def run(self):
@@ -63,6 +63,34 @@ class Experiment:
         percentiles = self.calculate_percentiles(aggregated_data)
         # exceedances = self.calcluate_exceedances(aggregated_data, percentiles)
     
+    def apply_seasonality(self, data):
+        if self.seasonality_window == 0:
+            return data
+        
+        # Select only reference period data for calculating the seasonal cycle
+        ref_data = data.sel(time=slice(self.ref_start, self.ref_end))
+        
+        # Group by day of year and calculate mean
+        seasonal_cycle = ref_data.groupby('time.dayofyear').mean()
+        
+        # Apply rolling window to smooth the seasonal cycle if seasonality_window > 1
+        if self.seasonality_window > 1:
+            # Use periodic padding to handle wrap-around at year boundaries
+            seasonal_cycle = seasonal_cycle.rolling(
+                dayofyear=self.seasonality_window,
+                center=True,
+                # Require at least 1 valid value in the window to compute the mean
+                min_periods=1
+            ).mean()
+        
+        # Broadcast the seasonal cycle to all years in the original data
+        seasonal_cycle = seasonal_cycle.sel(dayofyear=data['time.dayofyear'])
+        
+        # Subtract seasonal cycle from the original data
+        deseasonalized = data - seasonal_cycle
+        
+        return deseasonalized
+    
     def aggregate(self, data):
         """
             Data is a zarr containing 1 or more full years of daily values for one or more variables for the full range of lat-longs.
@@ -70,6 +98,8 @@ class Experiment:
         
         print("Converting to no-leap calendar")
         data = data.convert_calendar('noleap')
+        
+        data = self.apply_seasonality(data)
         
         data = data.sel(time=slice(self.agg_start, self.agg_end))
         

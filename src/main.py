@@ -8,7 +8,7 @@ from recordtype import recordtype
 
 Params = recordtype('Params',['ref_start', 'ref_end', 'an_start', 
                               'an_end', 'input_zarr_path', 'var', 'aggregation', 'agg_window',
-                              'perc_boosting_window', 'percentile', 'lat_size', 'lon_size'])
+                              'perc_boosting_window', 'percentile', 'lat_size', 'lon_size', 'seasonality_window'])
 
 full_run_params = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
                          ref_end=cftime.DatetimeNoLeap(1989, 12, 31),
@@ -21,7 +21,8 @@ full_run_params = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
                          perc_boosting_window=None,
                          percentile=None,
                          lat_size=721, 
-                         lon_size=1440)
+                         lon_size=1440,
+                         seasonality_window=0)
 
 local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
                          ref_end=cftime.DatetimeNoLeap(1994, 12, 31),
@@ -34,7 +35,8 @@ local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
                          perc_boosting_window=None,
                          percentile=None,
                          lat_size=721, 
-                         lon_size=1440)
+                         lon_size=1440,
+                         seasonality_window=0)
 
 # https://agupubs.onlinelibrary.wiley.com/doi/epdf/10.1029/2012GL053361
 
@@ -57,7 +59,8 @@ compare_perkins_2012 = Params(ref_start=cftime.DatetimeNoLeap(year_start, 1, 1),
                          perc_boosting_window=None,
                          percentile=None,
                          lat_size=721,
-                         lon_size=1440)
+                         lon_size=1440
+                         seasonality_window=0)
 
 if __name__ == '__main__':
     cfg = compare_perkins_2012
