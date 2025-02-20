@@ -13,3 +13,5 @@ tqdm
 opencv-python
 imageio
 imageio[ffmpeg]
+recordtype
+python-dotenv

@@ -46,27 +46,26 @@ class Experiment:
         self.lat_size=cfg.lat_size
         self.lon_size=cfg.lon_size
         
-        # EXPERIMENT PATHS AND DIRECTORY INITIALIZATION
-        self.experiment_dir = f"experiments/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{self.agg_window}_percboost_{self.perc_boost}"
-        self.pre_percentile_zarr_path = os.path.join(self.experiment_dir, 'pre_precentile.zarr')
+        self.seasonality_window = cfg.seasonality_window
         
+        # EXPERIMENT PATHS AND DIRECTORY INITIALIZATION
+        self.experiment_dir = f"experiments/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{self.agg_window}_percboost_{self.perc_boost}_seasonality_{self.seasonality_window}"
+        
+        os.makedirs(self.experiment_dir, exist_ok=True)
+        
+        self.pre_percentile_zarr_path = os.path.join(self.experiment_dir, 'pre_precentile.zarr')
         perc_string = str(self.percentile).replace('.','_')
         self.percentiles_path = os.path.join(f"{self.experiment_dir}", f"percentiles_{perc_string}.npy")
         self.monthly_exceedances_path = os.path.join(self.experiment_dir, f"monthly_exceedances_{perc_string}.zarr")
-    
-        self.seasonality_window = cfg.seasonality_window
-        os.makedirs(self.experiment_dir, exist_ok=True)
+        self.exceedances_path = os.path.join(self.experiment_dir, f"exceedances_{perc_string}.npy")
     
     def run(self):
         data = xr.open_zarr(self.input_zarr_path)[self.var]
         aggregated_data = self.aggregate(data)
         percentiles = self.calculate_percentiles(aggregated_data)
-        # exceedances = self.calcluate_exceedances(aggregated_data, percentiles)
+        exceedances = self.calcluate_exceedances(aggregated_data, percentiles)
     
-    def apply_seasonality(self, data):
-        if self.seasonality_window == 0:
-            return data
-        
+    def get_seasonal_mean(self, data):
         # Select only reference period data for calculating the seasonal cycle
         ref_data = data.sel(time=slice(self.ref_start, self.ref_end))
         
@@ -74,7 +73,7 @@ class Experiment:
         seasonal_cycle = ref_data.groupby('time.dayofyear').mean()
         
         # Apply rolling window to smooth the seasonal cycle if seasonality_window > 1
-        if self.seasonality_window > 1:
+        if self.seasonality_window == 1:
             # Use periodic padding to handle wrap-around at year boundaries
             seasonal_cycle = seasonal_cycle.rolling(
                 dayofyear=self.seasonality_window,
@@ -82,12 +81,21 @@ class Experiment:
                 # Require at least 1 valid value in the window to compute the mean
                 min_periods=1
             ).mean()
+        else:
+            raise Exception("Only seasonality window 0 or 1 is supported")
+        
+        self.seasonal_mean = seasonal_cycle.values
+        print("$$$$, ", self.seasonal_mean.shape)
         
         # Broadcast the seasonal cycle to all years in the original data
-        seasonal_cycle = seasonal_cycle.sel(dayofyear=data['time.dayofyear'])
+        return seasonal_cycle.sel(dayofyear=data['time.dayofyear'])    
+    
+    def apply_seasonality(self, data):
+        if self.seasonality_window == 0:
+            return data
         
         # Subtract seasonal cycle from the original data
-        deseasonalized = data - seasonal_cycle
+        deseasonalized = data - self.get_seasonal_mean(data)
         
         return deseasonalized
     
@@ -265,12 +273,34 @@ class Experiment:
     def calcluate_exceedances(self, aggregated_data, percentiles):        
         print('Aggregated Data', aggregated_data)
         
-        assert aggregated_data.shape[0] % percentiles.shape[0] == 0, f"{aggregated_data.shape}, {percentiles.shape}"
-        aggregated_data_doy = aggregated_data.groupby('time.dayofyear')
-        print('Aggregated Data DOY', aggregated_data_doy)
+        aggregated_data = aggregated_data.sel(time=slice(self.an_start, self.an_end))
         
-        threshhold_da = xr.DataArray(percentiles, dims=["dayofyear", 'latitude', 'longitude'])
-        exceedances_doy = (aggregated_data_doy > threshhold_da)
-        exceedances_doy = exceedances_doy.chunk({"time": -1})
-        exceedances_doy.resample(time="1D").sum(dim="time")
-        return exceedances_doy
+        print("Selected aggregated data")
+        print(aggregated_data)
+        
+        assert aggregated_data.shape[0] % percentiles.shape[0] == 0, f"{aggregated_data.shape}, {percentiles.shape}"
+        
+        # Create threshold DataArray with proper dimensions and coordinates
+        threshhold_da = xr.DataArray(
+            percentiles,
+            dims=["dayofyear", "lat", "lon"],
+            coords={
+                "dayofyear": np.arange(1, 366),
+                "lat": aggregated_data.lat,
+                "lon": aggregated_data.lon
+            }
+        )
+        
+        if self.seasonality_window == 1:
+            # threshhold_da = threshhold_da + self.seasonal_mean
+            threshhold_da = threshhold_da
+        
+        # Compare using the day of year coordinate
+        exceedances = aggregated_data.groupby("time.dayofyear") > threshhold_da
+        print("Exceedances shape:", exceedances.shape)
+        
+        monthly_exceedances = exceedances.resample(time="1D").sum(dim="time")
+        # Convert to numpy array before saving
+        exceedances_np = exceedances.values
+        np.save(self.exceedances_path.removesuffix('.npy'), exceedances_np)
+        return exceedances
