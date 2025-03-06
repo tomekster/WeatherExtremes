@@ -63,7 +63,7 @@ class Experiment:
         data = xr.open_zarr(self.input_zarr_path)[self.var]
         aggregated_data = self.aggregate(data)
         percentiles = self.calculate_percentiles(aggregated_data)
-        exceedances = self.calcluate_exceedances(aggregated_data, percentiles)
+        exceedances = self.calculate_exceedances(aggregated_data, percentiles)
     
     def get_seasonal_mean(self, data):
         # Select only reference period data for calculating the seasonal cycle
@@ -270,7 +270,7 @@ class Experiment:
         np.save(self.percentiles_path.removesuffix('.npy'), percentiles)
         return percentiles
         
-    def calcluate_exceedances(self, aggregated_data, percentiles):        
+    def calculate_exceedances(self, aggregated_data, percentiles):        
         print('Aggregated Data', aggregated_data)
         
         aggregated_data = aggregated_data.sel(time=slice(self.an_start, self.an_end))
@@ -283,11 +283,11 @@ class Experiment:
         # Create threshold DataArray with proper dimensions and coordinates
         threshhold_da = xr.DataArray(
             percentiles,
-            dims=["dayofyear", "lat", "lon"],
+            dims=["dayofyear", "latitude", "longitude"],
             coords={
                 "dayofyear": np.arange(1, 366),
-                "lat": aggregated_data.lat,
-                "lon": aggregated_data.lon
+                "latitude": aggregated_data.latitude,
+                "longitude": aggregated_data.longitude
             }
         )
         

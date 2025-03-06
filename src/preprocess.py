@@ -68,7 +68,7 @@ def preprocess_weatherbench2(variable, aggregation_method):
     
     ensure_dimensions(result)
     
-    processed_zarr_path = os.path.join(PREPRCESSED_DIR, f'weatherbench2_{variable}_daily_{aggregation_method}.zarr')
+    processed_zarr_path = os.path.join(PREPRCESSED_DIR, f'2_weatherbench2_{variable}_daily_{aggregation_method}.zarr')
     
     print(f"Preprocessed raw data from {WEATHERBENECH2_PATH}, saving to {processed_zarr_path}")
     

@@ -67,8 +67,10 @@ test_run_params = Params(ref_start=cftime.DatetimeNoLeap(1991, 1, 1),
                          ref_end=cftime.DatetimeNoLeap(1992, 12, 31),
                          an_start=cftime.DatetimeNoLeap(1991, 1, 1),
                          an_end=cftime.DatetimeNoLeap(1992, 12, 31),
-                         input_zarr_path='data/michaels_t2_single_arr_mean_zarr_1990_2006.zarr',
-                         var='daily_mean_2m_temperature',
+                         #input_zarr_path='../WeatherExtremes2/data/michaels_t2_single_arr_mean_zarr_1990_2006.zarr',
+                         #var='daily_mean_2m_temperature',
+                         input_zarr_path='data/preprocessed/weatherbench2_2m_temperature_daily_mean.zarr/',
+                         var='2m_temperature',
                          aggregation=None,
                          agg_window=None,
                          perc_boosting_window=None,
@@ -78,18 +80,42 @@ test_run_params = Params(ref_start=cftime.DatetimeNoLeap(1991, 1, 1),
                          seasonality_window=1,
                          output_dir=os.getenv('OUT_DIR'))
 
+# The actual test we designed with SVEN
+with_seasonality = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
+                         ref_end=cftime.DatetimeNoLeap(1989, 12, 31),
+                         an_start=cftime.DatetimeNoLeap(1960, 1, 1),
+                         an_end=cftime.DatetimeNoLeap(2019, 12, 31),
+                         #input_zarr_path='data/michaels_t2_single_arr_mean_zarr_1990_2006.zarr',
+                         #var='daily_mean_2m_temperature',
+                         input_zarr_path='data/preprocessed/weatherbench2_2m_temperature_daily_mean.zarr/',
+                         var='2m_temperature',
+                         aggregation=None,
+                         agg_window=None,
+                         perc_boosting_window=None,
+                         percentile=None,
+                         lat_size=721, 
+                         lon_size=1440,
+                         seasonality_window=None,
+                         output_dir=os.getenv('OUT_DIR'))
+
+
 if __name__ == '__main__':
-    cfg = test_run_params
+    #cfg = test_run_params
+    cfg = with_seasonality 
     
     aggregations=[AGG.MEAN]
-    agg_windows=[3]
-    perc_boosting_windows=[3]
+    # agg_windows=[1,7,15]
+    # perc_boosting_windows=[7,15]
+    agg_windows=[1]
+    perc_boosting_windows=[15]
     percentiles=[0.90]
+    seasonality_window=[0,1]
     
-    cartesian_product = itertools.product(aggregations, agg_windows, perc_boosting_windows, percentiles)
-    for aggregation, agg_window, perc_boosting_window, percentile in tqdm(list(cartesian_product)):
+    cartesian_product = itertools.product(aggregations, agg_windows, perc_boosting_windows, percentiles, seasonality_window)
+    for aggregation, agg_window, perc_boosting_window, percentile, seasonality_window in tqdm(list(cartesian_product)):
         cfg.aggregation = aggregation
         cfg.agg_window = agg_window
         cfg.perc_boosting_window = perc_boosting_window
         cfg.percentile = percentile
+        cfg.seasonality_window = seasonality_window
         Experiment(cfg).run()
