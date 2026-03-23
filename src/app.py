@@ -12,7 +12,7 @@ class TemperatureViewer(QMainWindow):
         self.setGeometry(100, 100, 1200, 600)
         
         # Load temperature data
-        self.temp_data = np.load('/home/tsternal/WeatherExtremes/daily_mean_2m_temperature_1990_1994_AGG.MEAN_aggrwindow_5_percboost_5/percentiles_0_95.npy')  # [365, 721, 1440]
+        self.temp_data = np.load('/home/tsternal/WeatherExtremes2/daily_mean_2m_temperature_1990_1994_AGG.MEAN_aggrwindow_5_percboost_5/percentiles_0_95.npy')  # [365, 721, 1440]
         
         # Create main widget and layout
         main_widget = QWidget()

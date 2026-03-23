@@ -1,306 +1,375 @@
+"""
+Experiment: single-pass band-by-band extremes-detection pipeline.
+
+Design goals
+------------
+* **No intermediate aggregated zarr.**  The rolling aggregation is computed
+  on the fly for each latitude band and discarded after the band's thresholds
+  and exceedances have been written to disk.  This saves ~91 GB of disk I/O
+  for a 60-year global dataset.
+
+* **Streaming writes.**  Both the thresholds and exceedances zarr stores are
+  pre-created (empty) before the main loop and filled band by band, so neither
+  output array is ever fully resident in RAM.
+
+* **Tight memory budget.**  The only large in-memory object at any one time is
+  the aggregated float32 array for one lat band.  With the default 1 GB
+  budget that is 7 lat rows × 21 902 days × 1 440 lons × 4 bytes ≈ 880 MB.
+
+* **Good zarr chunking.**  Exceedances chunks are sized ``(365, band, nlon)``
+  (~3.6 MB each for a 7-row band, global grid).  This aligns with the
+  band-by-band write pattern and groups full years for time-window reads.
+  Blosc/LZ4 compression is applied; for ~10% True (90th percentile) boolean
+  data the compressed size is roughly ¼ of the raw size.
+
+Pipeline stages (per band)
+--------------------------
+1. Load raw data lazily → select this lat band → convert to noleap calendar.
+2. Trim to padded time range ``[agg_start, agg_end]`` and validate bounds.
+3. Apply lazy rolling aggregation (xarray/dask).
+4. Materialise the band (``compute()``): peak RAM ≈ budget.
+5. Slice out the reference period; call ``compute_thresholds``; write to the
+   thresholds zarr.
+6. Slice out the analysis period; call ``detect_exceedances``; write to the
+   exceedances zarr.
+
+Outputs
+-------
+``thresholds.zarr``   – float32, shape ``(365, nlat, nlon)``
+``exceedances.zarr``  – bool,    shape ``(n_an_days, nlat, nlon)``, compressed
+"""
+from __future__ import annotations
+
 import os
+from dataclasses import dataclass
 from datetime import timedelta
-import xarray as xr
-from enums import AGG
-import zarr
-import time
-from tqdm import tqdm
-import dask.array as da
+from typing import Optional
+
+import cftime
 import numpy as np
+import xarray as xr
+import zarr
+from zarr.codecs import BloscCodec, BloscShuffle
+from tqdm import tqdm
+
+from core import (
+    AggMethod,
+    rolling_aggregate_xarray,
+    compute_thresholds,
+    detect_exceedances,
+)
 from utils.utils import ensure_dimensions
 
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Config:
+    """All parameters needed for one experiment run.
+
+    Dates must be ``cftime.DatetimeNoLeap`` objects.
+    ``agg_method`` is a string: ``'mean'``, ``'max'``, ``'min'``, or ``'sum'``.
+    ``lat_band_size``: rows processed at once (``None`` → auto from 1 GB budget).
+    """
+    input_zarr_path: str
+    var:            str
+    ref_start:      object    # cftime.DatetimeNoLeap
+    ref_end:        object
+    an_start:       object
+    an_end:         object
+    agg_window:     int
+    agg_method:     str       # 'mean' | 'max' | 'min' | 'sum'
+    perc_boost:     int
+    percentile:     float
+    output_dir:     str
+    lat_band_size:  Optional[int] = None   # None → auto
+
+
+_STR_TO_AGG = {
+    "mean": AggMethod.MEAN,
+    "max":  AggMethod.MAX,
+    "min":  AggMethod.MIN,
+    "sum":  AggMethod.SUM,
+}
+
+
+# ---------------------------------------------------------------------------
+# Experiment
+# ---------------------------------------------------------------------------
+
 class Experiment:
-    """
-        0. Create a dedicated directory for every experiment
-        1. Process raw data.
-        2. Perform aggregation.
-        3. Arrange data in the pre-percentile calculation format.
-        4. Calculate percentiles.
-        
-        At every stage:
-            1. Verify if the data is already saved on the disk. If yes, read from the disk, otherwise recompute and save.
-            2. After every processing step perform additional validation for NaNs.    
-    """
-    
-    def __init__(self, cfg):
+    """Run the three-stage extremes pipeline for a given Config."""
+
+    def __init__(self, cfg: Config) -> None:
+        _validate(cfg)
+
         self.input_zarr_path = cfg.input_zarr_path
-        
-        # PARAMETERS INITIALIZATION
-        self.var = cfg.var
-        self.aggregation = cfg.aggregation
-        self.ref_start, self.ref_end = cfg.ref_start, cfg.ref_end
-        self.an_start, self.an_end = cfg.an_start, cfg.an_end
-        self.perc_boost = cfg.perc_boosting_window
-        self.agg_window = cfg.agg_window
-        self.half_perc_boost = self.perc_boost // 2
-        self.n_years = self.ref_end.year - self.ref_start.year + 1
-        self.percentile = cfg.percentile
+        self.var         = cfg.var
+        self.agg_method  = _STR_TO_AGG[cfg.agg_method.lower()]
+        self.ref_start   = cfg.ref_start
+        self.ref_end     = cfg.ref_end
+        self.an_start    = cfg.an_start
+        self.an_end      = cfg.an_end
+        self.agg_window  = cfg.agg_window
+        self.perc_boost  = cfg.perc_boost
+        self.percentile  = cfg.percentile
+        self.n_years     = cfg.ref_end.year - cfg.ref_start.year + 1
+        self._cfg_lat_band_size = cfg.lat_band_size
 
-        self.half_agg_days = timedelta(days=self.agg_window//2)
-        self.half_perc_boost_days = timedelta(days=self.half_perc_boost)
-        
-        self.agg_start = min(self.ref_start, self.an_start) - (self.half_agg_days + self.half_perc_boost_days)
-        self.agg_end = max(self.ref_end, self.an_end) + (self.half_agg_days + self.half_perc_boost_days)
-        
-        # TODO(tsternal) - these are the parameters of the source dataset. Move to a dedicated class
-        self.lat_size=cfg.lat_size
-        self.lon_size=cfg.lon_size
-        
-        self.seasonality_window = cfg.seasonality_window
-        
-        # EXPERIMENT PATHS AND DIRECTORY INITIALIZATION
-        self.experiment_dir = f"experiments/{self.var}_{self.ref_start.year}_{self.ref_end.year}_{str(self.aggregation)}_aggrwindow_{self.agg_window}_percboost_{self.perc_boost}_seasonality_{self.seasonality_window}"
-        
+        # The rolling window needs half_agg days of padding so that no
+        # boundary value in the ref or analysis period is NaN.
+        half_agg = timedelta(days=self.agg_window // 2)
+        self.agg_start = min(self.ref_start, self.an_start) - half_agg
+        self.agg_end   = max(self.ref_end,   self.an_end)   + half_agg
+
+        # Precomputed integer offsets (days from agg_start)
+        self._ref_offset  = (self.ref_start - self.agg_start).days
+        self._an_offset   = (self.an_start  - self.agg_start).days
+
+        perc_str = str(self.percentile).replace(".", "_")
+        self.experiment_dir = os.path.join(
+            cfg.output_dir,
+            f"{self.var}"
+            f"_ref{self.ref_start.year}-{self.ref_end.year}"
+            f"_an{self.an_start.year}-{self.an_end.year}"
+            f"_agg{self.agg_window}{cfg.agg_method}"
+            f"_boost{self.perc_boost}",
+        )
         os.makedirs(self.experiment_dir, exist_ok=True)
-        
-        self.pre_percentile_zarr_path = os.path.join(self.experiment_dir, 'pre_precentile.zarr')
-        perc_string = str(self.percentile).replace('.','_')
-        self.percentiles_path = os.path.join(f"{self.experiment_dir}", f"percentiles_{perc_string}.npy")
-        self.monthly_exceedances_path = os.path.join(self.experiment_dir, f"monthly_exceedances_{perc_string}.zarr")
-        self.exceedances_path = os.path.join(self.experiment_dir, f"exceedances_{perc_string}.npy")
-    
-    def run(self):
-        data = xr.open_zarr(self.input_zarr_path)[self.var]
-        aggregated_data = self.aggregate(data)
-        percentiles = self.calculate_percentiles(aggregated_data)
-        exceedances = self.calculate_exceedances(aggregated_data, percentiles)
-    
-    def get_seasonal_mean(self, data):
-        # Select only reference period data for calculating the seasonal cycle
-        ref_data = data.sel(time=slice(self.ref_start, self.ref_end))
-        
-        # Group by day of year and calculate mean
-        seasonal_cycle = ref_data.groupby('time.dayofyear').mean()
-        
-        # Apply rolling window to smooth the seasonal cycle if seasonality_window > 1
-        if self.seasonality_window == 1:
-            # Use periodic padding to handle wrap-around at year boundaries
-            seasonal_cycle = seasonal_cycle.rolling(
-                dayofyear=self.seasonality_window,
-                center=True,
-                # Require at least 1 valid value in the window to compute the mean
-                min_periods=1
-            ).mean()
-        else:
-            raise Exception("Only seasonality window 0 or 1 is supported")
-        
-        self.seasonal_mean = seasonal_cycle.values
-        print("$$$$, ", self.seasonal_mean.shape)
-        
-        # Broadcast the seasonal cycle to all years in the original data
-        return seasonal_cycle.sel(dayofyear=data['time.dayofyear'])    
-    
-    def apply_seasonality(self, data):
-        if self.seasonality_window == 0:
-            return data
-        
-        # Subtract seasonal cycle from the original data
-        deseasonalized = data - self.get_seasonal_mean(data)
-        
-        return deseasonalized
-    
-    def aggregate(self, data):
-        """
-            Data is a zarr containing 1 or more full years of daily values for one or more variables for the full range of lat-longs.
-        """
-        
-        print("Converting to no-leap calendar")
-        data = data.convert_calendar('noleap')
-        
-        data = self.apply_seasonality(data)
-        
-        data = data.sel(time=slice(self.agg_start, self.agg_end))
-        
-        if data['time'][0] != self.agg_start:
-            raise ValueError(f"Missing data at the beginning of the reference period. Data start date: {data['time'][0]}, Expected start date: {self.agg_start}")
-        if data['time'][-1] != self.agg_end:
-            raise ValueError(f"Missing data at the end of the reference period. Data end date: {data['time'][-1]}, Expected end date: {self.agg_end}")
-        
-        print("Aggregating data...")
-        rolling_data = data.rolling(time=self.agg_window, center=True)
 
-        if self.aggregation == AGG.MEAN:
-            aggregated_data = rolling_data.mean()
-        elif self.aggregation == AGG.SUM:
-            aggregated_data = rolling_data.sum()
-        elif self.aggregation == AGG.MIN:
-            aggregated_data = rolling_data.min()
-        elif self.aggregation == AGG.MAX:
-            aggregated_data = rolling_data.max()
-        else:
-            raise Exception("Wrong type of aggregation provided: params['aggregation'] = ", self.aggregation)
-        
-        ensure_dimensions(aggregated_data)
-        
-        print("Successfully aggregated data!")
-        
-        return aggregated_data
-    
-    def load_percentiles(self):
-        path = self.percentiles_path
-        print(f"Percentiles file exists. Loading from {path}")
-        return np.load(path)
-        
-    def calculate_percentiles(self, aggregated_data):
-        pre_perc_zarr = self.load_pre_perc_zarr() if os.path.exists(self.pre_percentile_zarr_path) else self.compute_pre_perc_zarr(aggregated_data)
-        
-        percentiles = self.load_percentiles() if os.path.exists(self.percentiles_path) else self._calculate_percentiles(pre_perc_zarr)
-        
-        return percentiles
-    
-    def load_pre_perc_zarr(self):
-        print(f"PrePercentile Zarr exists, reading from {self.pre_percentile_zarr_path}")
-        return zarr.open(self.pre_percentile_zarr_path)
-    
-    def compute_pre_perc_zarr(self, aggregated_data):
-        print("PrePercentile Zarr not found. Calcluating and saving pre-percentiles")
-        pre_perc_array = self.parallel_pre_percentile_arrange(aggregated_data)
-        pre_perc_zarr = self.save_pre_percentile_to_zarr(pre_perc_array)
-        return pre_perc_zarr
+        self.thresholds_zarr_path  = os.path.join(self.experiment_dir,
+                                                   "thresholds.zarr")
+        self.exceedances_zarr_path = os.path.join(self.experiment_dir,
+                                                   f"exceedances_{perc_str}.zarr")
 
-    def parallel_pre_percentile_arrange(self, agg_data, start_doy=1, end_doy=365):
-        """
-        Rearrange the grouped by DOY data and save to zarr
-        """
-        print(agg_data)
-        perc_start = self.ref_start - self.half_perc_boost_days
-        perc_end = self.ref_end + self.half_perc_boost_days
-        
-        jan1doy = 1
-        dec31doy = 365
-        prefix_to_append = dec31doy + self.half_perc_boost - 365 # How many doy_groups from the beginning should be appended
-        suffix_to_preppend = -(jan1doy - self.half_perc_boost - 1) # How many doy_groups from the end should be prepended
-        
-        print("Rearranging data into pre-percentile format")
-        
-        assert prefix_to_append >= 0
-        assert suffix_to_preppend >= 0
-        
-        # Read the data and group by Day Of Year
-        agg_data = agg_data.sel(time=slice(perc_start, perc_end))
-        #TODO(tsternal): add tests and try replacing groupby with array slicing
-        doy_grouped = agg_data.groupby('time.dayofyear')
-        
-        prefix_to_append_index=prefix_to_append
-        suffix_to_preppend_index=len(doy_grouped)-suffix_to_preppend
-        
-        prefix_arrays = []
-        main_arrays = []
-        suffix_arrays = []
-        
-        for day_of_year in range(start_doy,end_doy+1):
-            # Select the group corresponding to this day of year
-            doy_groups_np = doy_grouped[day_of_year].data  # Get the underlying dask array
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-            if day_of_year-1 < prefix_to_append_index:
-                suffix_arrays.append(doy_groups_np[1:])
-                doy_groups_np = doy_groups_np[:-1]
-            elif day_of_year-1 >= suffix_to_preppend_index:
-                prefix_arrays.append(doy_groups_np[:-1])
-                doy_groups_np = doy_groups_np[1:]
-                
-            assert doy_groups_np.shape[0] == self.n_years, f"Wrong array shape! Shape: {doy_groups_np.shape}"
-            main_arrays.append(doy_groups_np)
-            
-        arrays = prefix_arrays + main_arrays + suffix_arrays
-        return arrays
+    def run(self) -> None:
+        if self._outputs_exist():
+            print("All outputs already exist – nothing to do.")
+            print(f"  Thresholds : {self.thresholds_zarr_path}")
+            print(f"  Exceedances: {self.exceedances_zarr_path}")
+            return
 
-    def save_pre_percentile_to_zarr(self, arrays, batch_size=1):
-        start = time.time()
-        
-        pre_percentile_zarr_store = zarr.open(self.pre_percentile_zarr_path, mode='w', shape=(len(arrays) * self.n_years, self.lat_size, self.lon_size), chunks=(batch_size * self.n_years, 1, self.lon_size), dtype=arrays[0].dtype)
-        
-        for i in tqdm(list(range(0, len(arrays), batch_size))):
-            batch = da.concatenate(arrays[i:i + batch_size])
-            start_index = i * self.n_years
-            end_index = start_index + batch.shape[0]
-            da.to_zarr(batch, pre_percentile_zarr_store, region=(slice(start_index, end_index), slice(None), slice(None)))
+        # ---- Open raw data (lazy, no data loaded yet) ----------------
+        raw = xr.open_zarr(self.input_zarr_path)[self.var]
+        raw = ensure_dimensions(raw)
+        raw = raw.convert_calendar("noleap")
 
-        end = time.time()
-        print(f"Rearranging: {end - start} seconds")
-        
-        return pre_percentile_zarr_store
-    
-    def _calculate_band_percentiles(self, band):
-        assert np.any(band > 0)
-        percentiles = []
-        for doy in tqdm(range(365), leave=False):
-            expected_band_len = self.n_years * (365 + self.perc_boost-1)
-            assert len(band) == expected_band_len, f'Wrong band shape: {band.shape}. The expected length is {expected_band_len}'
-            
-            # Select the days in the current day-of-year percentile boosting window
-            pre_percentile_window = band[self.n_years * doy: self.n_years * (self.perc_boost + doy)]
-            
-            try:
-                assert not np.isnan(pre_percentile_window).any()
-            except:
-                nan_indices = np.argwhere(np.isnan(pre_percentile_window))
-                raise Exception(f"The array contains NaN values in band {band} for day-of-year {doy} (indexed from 0)! {nan_indices.shape}")
-            
-            percentile =np.quantile(pre_percentile_window, self.percentile, axis=0) 
-            percentiles.append(percentile)
-    
-        band_percentiles = np.stack(percentiles)
-        print('Finished Computing Band Percentile! Percentiles Band Shape', band_percentiles.shape)
-        # assert np.any(band_percentiles > 0)
-        return band_percentiles
-            
-    def _calculate_percentiles(self, pre_perc_zarr):
-        print("Percentiles file not found. Calculating percentiles")
-        # To reduce the memory footprint and enable easy parallelization we will calculate the percentiles band, by band
-        # Since the original weather state array is 721 x 1440, we will split the first dimension into bands 
-        # Every band is a set of consecutive latitudes
-        max_mem = 1000000000 # ~1 GB
-        max_floats = max_mem // 4 # 4 bytes per float
-        band_size = max_floats // (self.n_years * (365 + self.perc_boost - 1) * self.lon_size)
-        band_size = min(self.lat_size, band_size)
-        
-        # Calculate Band Indices
-        print("BAND_SIZE", band_size)
-        bands_indices = list(range(0, self.lat_size, band_size))
-        if bands_indices[-1] < self.lat_size:
-            bands_indices.append(self.lat_size)
-        bands = list(zip(bands_indices, bands_indices[1:]))
-        
-        # Calculate percentiles for every Band
-        all_percentiles = [self._calculate_band_percentiles(pre_perc_zarr[:,start:end,:]) for (start, end) in bands]
-        percentiles = np.concatenate(all_percentiles, axis=1)
-        
-        print(f"Saving percentiles to {self.percentiles_path}")
-        np.save(self.percentiles_path.removesuffix('.npy'), percentiles)
-        return percentiles
-        
-    def calculate_exceedances(self, aggregated_data, percentiles):        
-        print('Aggregated Data', aggregated_data)
-        
-        aggregated_data = aggregated_data.sel(time=slice(self.an_start, self.an_end))
-        
-        print("Selected aggregated data")
-        print(aggregated_data)
-        
-        assert aggregated_data.shape[0] % percentiles.shape[0] == 0, f"{aggregated_data.shape}, {percentiles.shape}"
-        
-        # Create threshold DataArray with proper dimensions and coordinates
-        threshhold_da = xr.DataArray(
-            percentiles,
+        nlat = raw.sizes["latitude"]
+        nlon = raw.sizes["longitude"]
+        n_total_days = (self.agg_end - self.agg_start).days + 1
+        n_an_days    = (self.an_end  - self.an_start).days  + 1
+
+        # ---- Validate source data covers the required range ----------
+        # Check on a single point to avoid loading the full grid.
+        _check_bounds(
+            raw.isel(latitude=0, longitude=0)
+               .sel(time=slice(self.agg_start, self.agg_end)),
+            self.agg_start, self.agg_end,
+        )
+
+        # ---- Decide lat_band_size ------------------------------------
+        lat_band_size = self._cfg_lat_band_size or _auto_lat_band_size(
+            n_total_days, nlon, budget_bytes=1_000_000_000
+        )
+        lat_band_size = min(lat_band_size, nlat)
+
+        print(
+            f"Grid: {nlat} lat × {nlon} lon | "
+            f"lat_band_size: {lat_band_size} rows | "
+            f"bands: {-(-nlat // lat_band_size)} | "
+            f"peak RAM per band: "
+            f"~{n_total_days * lat_band_size * nlon * 4 / 1e6:.0f} MB"
+        )
+
+        # ---- Pre-create output stores (empty, with schema) -----------
+        lat_vals = raw.latitude.values.astype(np.float32)
+        lon_vals = raw.longitude.values.astype(np.float32)
+        an_time_vals = (
+            raw.isel(latitude=0, longitude=0)
+               .sel(time=slice(self.an_start, self.an_end))
+               .time.values
+        )
+
+        thr_store = _create_zarr_store(
+            self.thresholds_zarr_path,
+            shape=(365, nlat, nlon),
+            chunks=(365, lat_band_size, nlon),
+            dtype=np.float32,
             dims=["dayofyear", "latitude", "longitude"],
             coords={
-                "dayofyear": np.arange(1, 366),
-                "latitude": aggregated_data.latitude,
-                "longitude": aggregated_data.longitude
-            }
+                "dayofyear": np.arange(1, 366, dtype=np.int32),
+                "latitude":  lat_vals,
+                "longitude": lon_vals,
+            },
         )
-        
-        if self.seasonality_window == 1:
-            # threshhold_da = threshhold_da + self.seasonal_mean
-            threshhold_da = threshhold_da
-        
-        # Compare using the day of year coordinate
-        exceedances = aggregated_data.groupby("time.dayofyear") > threshhold_da
-        print("Exceedances shape:", exceedances.shape)
-        
-        monthly_exceedances = exceedances.resample(time="1D").sum(dim="time")
-        # Convert to numpy array before saving
-        exceedances_np = exceedances.values
-        np.save(self.exceedances_path.removesuffix('.npy'), exceedances_np)
-        return exceedances
+
+        exc_store = _create_zarr_store(
+            self.exceedances_zarr_path,
+            shape=(n_an_days, nlat, nlon),
+            chunks=(min(365, n_an_days), lat_band_size, nlon),
+            dtype=bool,
+            dims=["time", "latitude", "longitude"],
+            coords={
+                "time":      _encode_time(an_time_vals),
+                "latitude":  lat_vals,
+                "longitude": lon_vals,
+            },
+            compressors=[BloscCodec(cname="lz4", clevel=5, shuffle=BloscShuffle.bitshuffle)],
+        )
+
+        # ---- Main loop: one lat band at a time ----------------------
+        for lat_start in tqdm(range(0, nlat, lat_band_size), desc="lat bands"):
+            lat_end = min(lat_start + lat_band_size, nlat)
+
+            # --- 1. Load and aggregate (lazy → compute) ---------------
+            band_raw = (
+                raw.isel(latitude=slice(lat_start, lat_end))
+                   .sel(time=slice(self.agg_start, self.agg_end))
+            )
+            # Materialise: (n_total_days, band_rows, nlon), float32
+            agg_band = (
+                rolling_aggregate_xarray(band_raw, self.agg_window, self.agg_method)
+                .astype(np.float32)
+                .compute()
+                .values  # numpy array from here on
+            )
+
+            # --- 2. Thresholds ----------------------------------------
+            ref_data = agg_band[
+                self._ref_offset : self._ref_offset + self.n_years * 365
+            ]
+            band_thr = compute_thresholds(
+                ref_data.astype(np.float64),
+                self.perc_boost,
+                self.percentile,
+            ).astype(np.float32)
+
+            thr_store[:, lat_start:lat_end, :] = band_thr
+
+            # --- 3. Exceedances ---------------------------------------
+            an_data = agg_band[self._an_offset : self._an_offset + n_an_days]
+            doys    = np.tile(np.arange(1, 366), -(-n_an_days // 365))[:n_an_days]
+
+            # If the analysis period doesn't start on Jan 1 we need the
+            # correct starting DOY, not 1.
+            an_start_doy = int(an_time_vals[0].timetuple().tm_yday)
+            if an_start_doy != 1:
+                doys = np.tile(np.arange(1, 366), 1 + n_an_days // 365)
+                doys = doys[an_start_doy - 1 : an_start_doy - 1 + n_an_days]
+
+            band_exc = detect_exceedances(
+                an_data.astype(np.float64),
+                doys,
+                band_thr.astype(np.float64),
+            )
+
+            exc_store[:, lat_start:lat_end, :] = band_exc
+
+        print("\nDone.")
+        print(f"  Thresholds : {self.thresholds_zarr_path}")
+        print(f"  Exceedances: {self.exceedances_zarr_path}")
+
+    # ------------------------------------------------------------------
+
+    def _outputs_exist(self) -> bool:
+        return (
+            os.path.exists(self.thresholds_zarr_path)
+            and os.path.exists(self.exceedances_zarr_path)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _validate(cfg: Config) -> None:
+    if cfg.agg_window < 1 or cfg.agg_window % 2 == 0:
+        raise ValueError(
+            f"agg_window must be a positive odd integer, got {cfg.agg_window}"
+        )
+    if cfg.perc_boost < 1 or cfg.perc_boost % 2 == 0:
+        raise ValueError(
+            f"perc_boost must be a positive odd integer, got {cfg.perc_boost}"
+        )
+    if not (0.0 < cfg.percentile < 1.0):
+        raise ValueError(
+            f"percentile must be in (0, 1), got {cfg.percentile}"
+        )
+    if cfg.agg_method.lower() not in _STR_TO_AGG:
+        raise ValueError(
+            f"agg_method must be one of {list(_STR_TO_AGG)}, "
+            f"got '{cfg.agg_method}'"
+        )
+    if cfg.ref_end < cfg.ref_start:
+        raise ValueError("ref_end must be >= ref_start")
+    if cfg.an_end < cfg.an_start:
+        raise ValueError("an_end must be >= an_start")
+
+
+def _check_bounds(da, expected_start, expected_end) -> None:
+    actual_start = da["time"].values[0]
+    actual_end   = da["time"].values[-1]
+    if actual_start != expected_start:
+        raise ValueError(
+            f"Data starts at {actual_start} but expected {expected_start}. "
+            f"The source zarr does not cover the full padded range required "
+            f"by the rolling window (agg_window // 2 days before the first "
+            f"day of interest)."
+        )
+    if actual_end != expected_end:
+        raise ValueError(
+            f"Data ends at {actual_end} but expected {expected_end}. "
+            f"The source zarr does not cover the full padded range."
+        )
+
+
+def _auto_lat_band_size(n_total_days: int, nlon: int,
+                        budget_bytes: int = 1_000_000_000) -> int:
+    """Largest lat band whose aggregated float32 array fits in *budget_bytes*."""
+    bytes_per_row = n_total_days * nlon * 4  # float32
+    return max(1, budget_bytes // bytes_per_row)
+
+
+def _encode_time(cftime_values) -> np.ndarray:
+    """Encode cftime.DatetimeNoLeap values as int32 days since 1900-01-01."""
+    epoch = cftime.DatetimeNoLeap(1900, 1, 1)
+    return np.array([(t - epoch).days for t in cftime_values], dtype=np.int32)
+
+
+def _create_zarr_store(
+    path: str,
+    shape: tuple,
+    chunks: tuple,
+    dtype,
+    dims: list[str],
+    coords: dict,
+    compressors=None,
+) -> zarr.Array:
+    """Pre-create a zarr group with one data array and coordinate arrays.
+
+    The ``_ARRAY_DIMENSIONS`` attribute written on every array makes the
+    store openable with ``xr.open_zarr(path)`` without any extra arguments.
+    """
+    if os.path.exists(path):
+        import shutil
+        shutil.rmtree(path)
+
+    grp = zarr.open_group(path, mode="w")
+
+    kw = dict(shape=shape, chunks=chunks, dtype=dtype, dimension_names=dims)
+    if compressors is not None:
+        kw["compressors"] = compressors
+    data_arr = grp.create_array("data", **kw)
+
+    for coord_name, coord_vals in coords.items():
+        grp.create_array(coord_name, data=coord_vals,
+                         chunks=coord_vals.shape,
+                         dimension_names=[coord_name])
+
+    return data_arr

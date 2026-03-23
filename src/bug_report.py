@@ -61,13 +61,13 @@ b = b[:,3,3]
 b = [float(x) for x in sorted(b)]
 print(b)
 
-with Dataset('/home/tsternal/WeatherExtremes/data/michael_t2_mean/T2MEAN-1964-12', 'r') as ncfile:
+with Dataset('/home/tsternal/WeatherExtremes2/data/michael_t2_mean/T2MEAN-1964-12', 'r') as ncfile:
     dec = np.array(ncfile.variables['t2m'][:])
-with Dataset('/home/tsternal/WeatherExtremes/data/michael_t2_mean/T2MEAN-1965-01', 'r') as ncfile:
+with Dataset('/home/tsternal/WeatherExtremes2/data/michael_t2_mean/T2MEAN-1965-01', 'r') as ncfile:
     jan = np.array(ncfile.variables['t2m'][:])
-with Dataset('/home/tsternal/WeatherExtremes/data/michael_t2_mean/T2MEAN-1965-12', 'r') as ncfile:
+with Dataset('/home/tsternal/WeatherExtremes2/data/michael_t2_mean/T2MEAN-1965-12', 'r') as ncfile:
     dec2 = np.array(ncfile.variables['t2m'][:])
-with Dataset('/home/tsternal/WeatherExtremes/data/michael_t2_mean/T2MEAN-1966-01', 'r') as ncfile:
+with Dataset('/home/tsternal/WeatherExtremes2/data/michael_t2_mean/T2MEAN-1966-01', 'r') as ncfile:
     jan2 = np.array(ncfile.variables['t2m'][:])
     
 

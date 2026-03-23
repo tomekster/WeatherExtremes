@@ -12,7 +12,7 @@ def lat_lon_to_grid_index(pair):
     return ((x+90) * 4, (y+180) * 4)
 
 def load_data(vals):
-    file_path = f"/weather/WeatherExtremes/daily_mean_2m_temperature_1960_1989_AGG.MEAN_aggrwindow_{vals['agg_window']}_percboost_{vals['perc_boost']}/percentiles_0_{vals['perc']}.npy"
+    file_path = f"/weather/WeatherExtremes2/daily_mean_2m_temperature_1960_1989_AGG.MEAN_aggrwindow_{vals['agg_window']}_percboost_{vals['perc_boost']}/percentiles_0_{vals['perc']}.npy"
     # data = np.load(file_path)
     lat_idx, lon_idx = vals['lat_lon']
     # Open the file using open_memmap

@@ -1,121 +1,122 @@
-from enums import AGG
-import cftime
-from tqdm import tqdm
-import itertools
-from experiment import Experiment
-from recordtype import recordtype
+#!/usr/bin/env python3
+"""
+Compute weather-extreme exceedances from a zarr dataset.
+
+Example
+-------
+    cd /home/tsternal/phd/WeatherExtremes2
+    source venv/bin/activate
+
+    python src/main.py \\
+        --input   t2max.zarr \\
+        --var     daily_max_2m_temperature \\
+        --ref-start 1960-01-01  --ref-end 1989-12-31 \\
+        --an-start  1960-01-01  --an-end  2019-12-31 \\
+        --agg-window  3 \\
+        --agg-method  max \\
+        --perc-boost  3 \\
+        --percentile  0.90 \\
+        --output  experiments/
+
+Outputs (written inside --output/<run-name>/)
+---------------------------------------------
+    thresholds.zarr          per-DOY threshold array  (365, nlat, nlon) float32
+    exceedances_0_90.zarr    binary exceedance mask   (n_days, nlat, nlon) bool
+
+Both stores are xarray-compatible: open with xr.open_zarr(path)["data"].
+No large intermediate files are written – peak disk usage equals the
+two outputs above (~1.5 GB + ~5 GB compressed for a 60-year global run).
+"""
+import argparse
 import os
+import sys
 
-Params = recordtype('Params',['ref_start', 'ref_end', 'an_start', 
-                              'an_end', 'input_zarr_path', 'var', 'aggregation', 'agg_window', 'perc_boosting_window', 'percentile', 'lat_size', 'lon_size', 'seasonality_window', 'output_dir'])
+import cftime
 
-full_run_params = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
-                         ref_end=cftime.DatetimeNoLeap(1989, 12, 31),
-                         an_start=cftime.DatetimeNoLeap(1960, 1, 1),
-                         an_end=cftime.DatetimeNoLeap(2019, 12, 31),
-                         input_zarr_path='data/michaels_t2_single_arr_mean_zarr_1959-11-01_2021-02-01.zarr',
-                         var='daily_mean_2m_temperature',
-                         aggregation=None,
-                         agg_window=None,
-                         perc_boosting_window=None,
-                         percentile=None,
-                         lat_size=721, 
-                         lon_size=1440,
-                         seasonality_window=0,
-                         output_dir=os.getenv('OUT_DIR'))
+# Allow running from the repo root or from src/
+sys.path.insert(0, os.path.dirname(__file__))
 
-local_run_params = Params(ref_start=cftime.DatetimeNoLeap(1990, 1, 1),
-                         ref_end=cftime.DatetimeNoLeap(1991, 12, 31),
-                         an_start=cftime.DatetimeNoLeap(1990, 1, 1),
-                         an_end=cftime.DatetimeNoLeap(1991, 12, 31),
-                         input_zarr_path='data/michaels_t2_single_arr_mean_zarr_1990_2006.zarr',
-                         var='daily_mean_2m_temperature',
-                         aggregation=None,
-                         agg_window=None,
-                         perc_boosting_window=None,
-                         percentile=None,
-                         lat_size=721, 
-                         lon_size=1440,
-                         seasonality_window=0,
-                         output_dir=os.getenv('OUT_DIR'))
+from experiment import Config, Experiment
 
 
-
-# https://agupubs.onlinelibrary.wiley.com/doi/epdf/10.1029/2012GL053361
-
-year_start = 1990
-year_end = 1991
-ref_end = 1991
-
-compare_perkins_2012 = Params(ref_start=cftime.DatetimeNoLeap(year_start, 1, 1),
-                         ref_end=cftime.DatetimeNoLeap(ref_end, 12, 31), # Match the paper
-                         an_start=cftime.DatetimeNoLeap(year_start, 1, 1),
-                         an_end=cftime.DatetimeNoLeap(year_end, 12, 31),
-                         input_zarr_path=f'data/preprocessed/weatherbench2_2m_temperature_daily_max.zarr',
-                         var='2m_temperature',
-                         aggregation=None,
-                         agg_window=None,
-                         perc_boosting_window=None,
-                         percentile=None,
-                         lat_size=721,
-                         lon_size=1440,
-                         seasonality_window=1,
-                         output_dir=os.getenv('OUT_DIR'))
+def _parse_date(s: str) -> cftime.DatetimeNoLeap:
+    """Convert 'YYYY-MM-DD' to cftime.DatetimeNoLeap."""
+    try:
+        y, m, d = map(int, s.split("-"))
+        return cftime.DatetimeNoLeap(y, m, d)
+    except Exception:
+        raise argparse.ArgumentTypeError(
+            f"Invalid date '{s}': expected YYYY-MM-DD"
+        )
 
 
-test_run_params = Params(ref_start=cftime.DatetimeNoLeap(1991, 1, 1),
-                         ref_end=cftime.DatetimeNoLeap(1992, 12, 31),
-                         an_start=cftime.DatetimeNoLeap(1991, 1, 1),
-                         an_end=cftime.DatetimeNoLeap(1992, 12, 31),
-                         #input_zarr_path='../WeatherExtremes2/data/michaels_t2_single_arr_mean_zarr_1990_2006.zarr',
-                         #var='daily_mean_2m_temperature',
-                         input_zarr_path='data/preprocessed/weatherbench2_2m_temperature_daily_mean.zarr/',
-                         var='2m_temperature',
-                         aggregation=None,
-                         agg_window=None,
-                         perc_boosting_window=None,
-                         percentile=None,
-                         lat_size=721, 
-                         lon_size=1440,
-                         seasonality_window=1,
-                         output_dir=os.getenv('OUT_DIR'))
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
-# The actual test we designed with SVEN
-with_seasonality = Params(ref_start=cftime.DatetimeNoLeap(1960, 1, 1),
-                         ref_end=cftime.DatetimeNoLeap(1989, 12, 31),
-                         an_start=cftime.DatetimeNoLeap(1960, 1, 1),
-                         an_end=cftime.DatetimeNoLeap(2019, 12, 31),
-                         #input_zarr_path='data/michaels_t2_single_arr_mean_zarr_1990_2006.zarr',
-                         #var='daily_mean_2m_temperature',
-                         input_zarr_path='data/preprocessed/weatherbench2_2m_temperature_daily_mean.zarr/',
-                         var='2m_temperature',
-                         aggregation=None,
-                         agg_window=None,
-                         perc_boosting_window=None,
-                         percentile=None,
-                         lat_size=721, 
-                         lon_size=1440,
-                         seasonality_window=None,
-                         output_dir=os.getenv('OUT_DIR'))
+    # ---- required ----
+    p.add_argument("--input",       required=True,
+                   help="Path to input zarr store")
+    p.add_argument("--var",         required=True,
+                   help="Variable name inside the zarr store")
+    p.add_argument("--ref-start",   required=True, type=_parse_date,
+                   metavar="YYYY-MM-DD",
+                   help="Reference period start (inclusive)")
+    p.add_argument("--ref-end",     required=True, type=_parse_date,
+                   metavar="YYYY-MM-DD",
+                   help="Reference period end (inclusive)")
+    p.add_argument("--an-start",    required=True, type=_parse_date,
+                   metavar="YYYY-MM-DD",
+                   help="Analysis period start (inclusive)")
+    p.add_argument("--an-end",      required=True, type=_parse_date,
+                   metavar="YYYY-MM-DD",
+                   help="Analysis period end (inclusive)")
+    p.add_argument("--agg-window",  required=True, type=int,
+                   help="Rolling-window size in days (positive odd integer, "
+                        "e.g. 3 = current day ± 1)")
+    p.add_argument("--perc-boost",  required=True, type=int,
+                   help="Percentile boosting-window size in DOYs "
+                        "(positive odd integer, e.g. 31 = current DOY ± 15)")
+    p.add_argument("--percentile",  required=True, type=float,
+                   help="Percentile threshold, e.g. 0.90 for the 90th percentile")
+    p.add_argument("--output",      required=True,
+                   help="Parent directory for experiment outputs")
+
+    # ---- optional ----
+    p.add_argument("--agg-method",  default="max",
+                   choices=["mean", "max", "min", "sum"],
+                   help="Aggregation method (default: max)")
+    p.add_argument("--lat-band-size", type=int, default=None,
+                   metavar="N",
+                   help="Latitude rows per memory chunk during threshold "
+                        "computation.  Default: auto-sized to fit in ~1 GB.")
+
+    return p
 
 
-if __name__ == '__main__':
-    #cfg = test_run_params
-    cfg = with_seasonality 
-    
-    aggregations=[AGG.MEAN]
-    # agg_windows=[1,7,15]
-    # perc_boosting_windows=[7,15]
-    agg_windows=[1]
-    perc_boosting_windows=[15]
-    percentiles=[0.90]
-    seasonality_window=[0,1]
-    
-    cartesian_product = itertools.product(aggregations, agg_windows, perc_boosting_windows, percentiles, seasonality_window)
-    for aggregation, agg_window, perc_boosting_window, percentile, seasonality_window in tqdm(list(cartesian_product)):
-        cfg.aggregation = aggregation
-        cfg.agg_window = agg_window
-        cfg.perc_boosting_window = perc_boosting_window
-        cfg.percentile = percentile
-        cfg.seasonality_window = seasonality_window
-        Experiment(cfg).run()
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    cfg = Config(
+        input_zarr_path=args.input,
+        var=args.var,
+        ref_start=args.ref_start,
+        ref_end=args.ref_end,
+        an_start=args.an_start,
+        an_end=args.an_end,
+        agg_window=args.agg_window,
+        agg_method=args.agg_method,
+        perc_boost=args.perc_boost,
+        percentile=args.percentile,
+        output_dir=args.output,
+        lat_band_size=args.lat_band_size,
+    )
+
+    Experiment(cfg).run()
+
+
+if __name__ == "__main__":
+    main()
