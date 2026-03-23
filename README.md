@@ -1,8 +1,8 @@
-# WeatherExtremes
+# WeatherExtremes2
 
 # Available Scripts
 
-./src/preprocess - preprocess weatherbench2_original data to daily values format expected by WeatherExtremes pipeline
+./src/preprocess - preprocess weatherbench2_original data to daily values format expected by WeatherExtremes2 pipeline
 ./src/main.py - basic experiments: configure the dataset, aggregations, reference period, analysis period, percentiles, etc. and produce the percentiles file and the exceedances file
 ./app.py - visualisation tool for exploring how percentiles change in different locations on earth
 

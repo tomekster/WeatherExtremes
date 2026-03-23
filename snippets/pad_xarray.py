@@ -1,8 +1,8 @@
 import xarray as xr
 import numpy as np
 
-zarr_path = '/home/tsternal/phd/WeatherExtremes/data/HadGHCND/HadGHCND_TXTN_acts_1950-2014_combined.zarr'
-out_path = '/home/tsternal/phd/WeatherExtremes/data/HadGHCND/HadGHCND_TXTN_acts_1950-2014_padded.zarr'
+zarr_path = '/home/tsternal/phd/WeatherExtremes2/data/HadGHCND/HadGHCND_TXTN_acts_1950-2014_combined.zarr'
+out_path = '/home/tsternal/phd/WeatherExtremes2/data/HadGHCND/HadGHCND_TXTN_acts_1950-2014_padded.zarr'
 
 padded_days = 31
 

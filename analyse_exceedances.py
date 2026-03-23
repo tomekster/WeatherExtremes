@@ -2,6 +2,7 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 import os
+from utils.utils import SEASON_BOUNDS
 
 def calculate_seasonal_trends(exceedances):
     """
@@ -21,14 +22,6 @@ def calculate_seasonal_trends(exceedances):
     # Dimensions: (4 seasons, 721 lats, 1440 longs, 2 parameters)
     trends = np.zeros((4, 721, 1440, 2))
     
-    # Define season boundaries (days within year)
-    season_bounds = [
-        (-31, 59),   # DJF: Dec(-31 to -1), Jan(0-30), Feb(31-58)
-        (59, 151),   # MAM: Mar-May
-        (151, 243),  # JJA: Jun-Aug
-        (243, 334)   # SON: Sep-Nov
-    ]
-    
     years_array = np.arange(N_YEARS)
     
     # Reshape exceedances to (N_YEARS, 365, lat, lon)
@@ -36,7 +29,7 @@ def calculate_seasonal_trends(exceedances):
     
     season_exceedances = []
     
-    for season_idx, (start, end) in enumerate(season_bounds):
+    for season_idx, (start, end) in enumerate(SEASON_BOUNDS):
         print(f"Season: {season_idx}")
         if season_idx == 0:  # DJF
             # Handle December separately

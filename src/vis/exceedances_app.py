@@ -190,20 +190,59 @@ _GRID   = "#2a2a2a"
 _ACCENT = "#f97316"
 
 
-def _map_figure(sums: np.ndarray, lat_vals, lon_vals, season_key: str) -> go.Figure:
-    fig = go.Figure(go.Heatmap(
-        z=sums.mean(axis=0),
-        x=lon_vals,
-        y=lat_vals,
-        colorscale="YlOrRd",
-        colorbar=dict(title="Mean days", thickness=14, len=0.75),
-        hovertemplate=(
-            "lon: %{x:.2f}°  lat: %{y:.2f}°<br>"
-            "mean: %{z:.1f} days<extra></extra>"
-        ),
-    ))
+def _regression_slope(s_years: np.ndarray, sums: np.ndarray) -> np.ndarray:
+    """OLS slope (days/year) for each grid cell.
+
+    Uses the analytic formula with mean-centred x for numerical stability:
+        slope = sum((x - x̄) * y) / sum((x - x̄)²)
+
+    Parameters
+    ----------
+    s_years : (n,)
+    sums    : (n, nlat, nlon)
+
+    Returns
+    -------
+    slope   : (nlat, nlon)  float32, units = days per year
+    """
+    x = s_years.astype(np.float64) - s_years.mean()     # (n,)
+    denom = float((x ** 2).sum())
+    numer = (x[:, None, None] * sums.astype(np.float64)).sum(axis=0)
+    return (numer / denom).astype(np.float32)
+
+
+def _map_figure(s_years: np.ndarray, sums: np.ndarray,
+                lat_vals, lon_vals,
+                season_key: str, display_mode: str) -> go.Figure:
+    season_label = SEASONS[season_key]["label"]
+
+    if display_mode == "mean":
+        z          = sums.mean(axis=0)
+        colorscale = "YlOrRd"
+        zmid       = None
+        cb_title   = "Mean days"
+        hover_fmt  = "lon: %{x:.2f}°  lat: %{y:.2f}°<br>mean: %{z:.1f} days<extra></extra>"
+        title      = f"Mean exceedance-days — {season_label}"
+    else:
+        z          = _regression_slope(s_years, sums)
+        colorscale = "RdBu_r"
+        zmid       = 0.0
+        cb_title   = "Slope (days/yr)"
+        hover_fmt  = "lon: %{x:.2f}°  lat: %{y:.2f}°<br>slope: %{z:.3f} days/yr<extra></extra>"
+        title      = f"Trend slope — {season_label}"
+
+    heatmap_kw = dict(
+        z=z, x=lon_vals, y=lat_vals,
+        colorscale=colorscale,
+        colorbar=dict(title=cb_title, thickness=14, len=0.75),
+        hovertemplate=hover_fmt,
+    )
+    if zmid is not None:
+        heatmap_kw["zmid"] = zmid
+
+    fig = go.Figure(go.Heatmap(**heatmap_kw))
     fig.update_layout(
-        title=f"Mean exceedance-days — {SEASONS[season_key]['label']}",
+        title=title,
         xaxis=dict(title="Longitude", showgrid=False),
         yaxis=dict(title="Latitude", showgrid=False, scaleanchor="x", scaleratio=1),
         margin=dict(l=60, r=10, t=50, b=50),
@@ -268,6 +307,19 @@ def build_app(experiments: dict[str, str], data: dict[str, tuple]) -> dash.Dash:
                         labelStyle={"marginRight": "16px", "color": "white",
                                     "cursor": "pointer"},
                     ),
+                    html.Label("Map shows:", style={"color": "#aaa", "flex": "0 0 auto"}),
+                    dcc.RadioItems(
+                        id="display-mode",
+                        options=[
+                            {"label": "Mean", "value": "mean"},
+                            {"label": "Trend (slope)", "value": "slope"},
+                        ],
+                        value="mean",
+                        inline=True,
+                        inputStyle={"marginRight": "4px"},
+                        labelStyle={"marginRight": "16px", "color": "white",
+                                    "cursor": "pointer"},
+                    ),
                 ],
             ),
             # ---- DJF note (hidden unless DJF selected) ----
@@ -282,7 +334,7 @@ def build_app(experiments: dict[str, str], data: dict[str, tuple]) -> dash.Dash:
                 children=[
                     dcc.Graph(
                         id="world-map",
-                        figure=_map_figure(sums0, lat_vals0, lon_vals0, "Annual"),
+                        figure=_map_figure(s_years0, sums0, lat_vals0, lon_vals0, "Annual", "mean"),
                         style={"flex": "7", "minWidth": 0},
                         config={"scrollZoom": True},
                     ),
@@ -297,15 +349,16 @@ def build_app(experiments: dict[str, str], data: dict[str, tuple]) -> dash.Dash:
         ],
     )
 
-    # ---- Update map when experiment or season changes ----
+    # ---- Update map when experiment, season, or display mode changes ----
     @app.callback(
         Output("world-map",   "figure"),
         Output("season-note", "children"),
         Output("season-note", "style"),
         Input("experiment-dropdown", "value"),
         Input("season-radio",        "value"),
+        Input("display-mode",        "value"),
     )
-    def update_map(label, season_key):
+    def update_map(label, season_key, display_mode):
         path = experiments[label]
         years, lat_vals, lon_vals, monthly = data[path]
         s_years, sums = compute_seasonal(years, monthly, season_key)
@@ -315,7 +368,7 @@ def build_app(experiments: dict[str, str], data: dict[str, tuple]) -> dash.Dash:
                       "padding": "0 16px 4px",
                       "display": "block" if note_text else "none"}
 
-        return _map_figure(sums, lat_vals, lon_vals, season_key), note_text, note_style
+        return _map_figure(s_years, sums, lat_vals, lon_vals, season_key, display_mode), note_text, note_style
 
     # ---- Update time series on hover ----
     @app.callback(
@@ -323,8 +376,9 @@ def build_app(experiments: dict[str, str], data: dict[str, tuple]) -> dash.Dash:
         Input("world-map",   "hoverData"),
         State("experiment-dropdown", "value"),
         State("season-radio",        "value"),
+        State("display-mode",        "value"),
     )
-    def update_timeseries(hover_data, label, season_key):
+    def update_timeseries(hover_data, label, season_key, display_mode):
         if hover_data is None:
             return _empty_ts_figure()
 
@@ -335,27 +389,39 @@ def build_app(experiments: dict[str, str], data: dict[str, tuple]) -> dash.Dash:
         pt      = hover_data["points"][0]
         lat_idx = int(np.argmin(np.abs(lat_vals - pt["y"])))
         lon_idx = int(np.argmin(np.abs(lon_vals - pt["x"])))
-        ts      = sums[:, lat_idx, lon_idx].astype(np.int32)
+        ts      = sums[:, lat_idx, lon_idx].astype(np.float64)
 
         lat_label = f"{abs(lat_vals[lat_idx]):.2f}°{'N' if lat_vals[lat_idx] >= 0 else 'S'}"
         lon_label = f"{abs(lon_vals[lon_idx]):.2f}°{'E' if lon_vals[lon_idx] >= 0 else 'W'}"
 
         season_meta = SEASONS[season_key]
 
-        # For DJF label x-axis ticks as "N-1/N"
         if season_key == "DJF":
-            x_vals    = [f"{y-1}/{y}" for y in s_years]
-            x_title   = "Winter (Dec year N-1 / Jan–Feb year N)"
+            x_vals  = [f"{y-1}/{y}" for y in s_years]
+            x_title = "Winter (Dec year N-1 / Jan–Feb year N)"
         else:
             x_vals  = s_years
             x_title = "Year"
 
-        fig = go.Figure(go.Scatter(
+        traces = [go.Scatter(
             x=x_vals, y=ts,
-            mode="lines+markers",
-            marker=dict(size=5,  color=_ACCENT),
+            mode="lines+markers", name="Exceedances",
+            marker=dict(size=5, color=_ACCENT),
             line=dict(color=_ACCENT, width=1.5),
-        ))
+        )]
+
+        # Overlay regression line when slope mode is active
+        if display_mode == "slope":
+            x_num  = s_years.astype(np.float64)
+            x_c    = x_num - x_num.mean()
+            slope  = float((x_c * ts).sum() / (x_c ** 2).sum())
+            interc = ts.mean() - slope * x_num.mean()
+            trend  = slope * x_num + interc
+            traces.append(go.Scatter(
+                x=x_vals, y=trend,
+                mode="lines", name=f"Slope: {slope:+.3f} days/yr",
+                line=dict(color="#60a5fa", width=2, dash="dash"),
+            ))
 
         subtitle = season_meta["note"]
         title_text = (
@@ -363,12 +429,14 @@ def build_app(experiments: dict[str, str], data: dict[str, tuple]) -> dash.Dash:
             + (f"<br><sup style='color:#facc15'>{subtitle}</sup>" if subtitle else "")
         )
 
+        fig = go.Figure(traces)
         fig.update_layout(
             title=dict(text=title_text, font=dict(size=12)),
             xaxis_title=x_title,
             yaxis_title="Exceedance-days",
+            legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
             plot_bgcolor=_DARK, paper_bgcolor=_DARK, font=dict(color="white"),
-            margin=dict(l=55, r=15, t=60, b=50),
+            margin=dict(l=55, r=15, t=60, b=70),
             xaxis=dict(showgrid=True, gridcolor=_GRID, tickangle=-45),
             yaxis=dict(showgrid=True, gridcolor=_GRID),
         )
