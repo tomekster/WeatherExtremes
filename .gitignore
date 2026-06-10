@@ -8,3 +8,4 @@ data/*
 *.zarr
 *.png
 *.npy
+test_ftp.py
