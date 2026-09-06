@@ -39,6 +39,7 @@ AGG_WINDOWS="1 3 5 7"
 PERC_BOOSTS="1 3 5 7"
 PERCENTILE=0.95
 REF_PERIODS="1960 1989 1990 2019"   # space-separated start end pairs; add more: "1960 1989 1970 1999"
+AGG_METHOD="max"
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
         --ref-periods)  REF_PERIODS="$2";  shift 2 ;;
         --agg-windows)  AGG_WINDOWS="$2";  shift 2 ;;
         --perc-boosts)  PERC_BOOSTS="$2";  shift 2 ;;
+        --agg-method)   AGG_METHOD="$2";   shift 2 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -97,6 +99,7 @@ echo "Input zarr   : ${INPUT}"
 echo "Output root  : ${OUT_ROOT}"
 echo "Locations    : ${LOCATIONS[*]}  (${n_loc})"
 echo "Agg windows  : ${AGG_WINDOWS}"
+echo "Agg method   : ${AGG_METHOD}"
 echo "Boost windows: ${PERC_BOOSTS}"
 echo "Percentile   : ${PERCENTILE}"
 echo "Ref periods  : ${REF_PERIODS}"
@@ -122,6 +125,7 @@ for location in "${LOCATIONS[@]}"; do
         --input        "${INPUT}"        \
         --output       "${output}"       \
         --agg-windows  ${AGG_WINDOWS}    \
+        --agg-method   "${AGG_METHOD}"   \
         --perc-boosts  ${PERC_BOOSTS}    \
         --percentile   "${PERCENTILE}"   \
         --ref-periods  ${REF_PERIODS}    \

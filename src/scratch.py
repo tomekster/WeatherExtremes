@@ -43,3 +43,31 @@ arr = zarr.open(path, mode="r")
 print(type(arr))
 print(arr.shape, arr.dtype)
 print(arr[:5])   # or another small slice
+
+
+
+# Zurich (549, 754), (47.25, 8.5)
+# San Francisco (511, 230), (37.75, -122.5)
+# Cape Town (224, 794), (-34.0, 18.5)
+
+
+# #LAT
+# San Fran 511 -> 37.75
+# Zurich 549  -> 47.25
+
+
+# 38 -> 9.5
+
+# 1 step lat = 0 .25 lat
+
+# # LON
+# Zurich 754 -> 8.5 
+# Cape 794 -> 18.5
+
+# 40 -> 10
+# 1 step lon -> 0.25 lon
+
+
+
+# LAT: 224 = -34 -> 360 = 0
+# LON: 754 = 8.5  -> 720 = 0
