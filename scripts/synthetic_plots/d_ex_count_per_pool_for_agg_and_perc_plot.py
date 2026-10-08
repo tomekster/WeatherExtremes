@@ -4,10 +4,18 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy as np
 from matplotlib.lines import Line2D
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--trend", choices=["ols", "theil-sen"], default="ols")
+parser.add_argument("--in-base-bootstrap", action="store_true")
+args = parser.parse_args()
+suffix = (("_zb" if args.in_base_bootstrap else "") + ("_ts" if args.trend == "theil-sen" else ""))
+title_note = (", in-base bootstrap" if args.in_base_bootstrap else "")
 
 from src.core import aggregation
 
-data_path = 'scripts/synthetic_plots/data/d_ex_count_per_pool_for_agg_and_perc/d_data.pkl'
+data_path = f'scripts/synthetic_plots/data/d_ex_count_per_pool_for_agg_and_perc/d_data{suffix}.pkl'
 with open(data_path, "rb") as f:
     ex_lst = pickle.load(f)
 
@@ -67,9 +75,9 @@ for agg in aggregation_windows:
                 capsize=3
             )
 
-plt.xlabel("Percentile")
-plt.ylabel("Slope a (trendline slope, mean ± std across samples)")
-plt.title(f"Trendline Slope vs POOL (boosting window) for various Aggregation Windows and Percentiles  \n(mean ± std across {n_samples} samples)")
+plt.xlabel("POOL (boosting window, days)")
+plt.ylabel(f"Slope a ({'Theil–Sen' if args.trend == 'theil-sen' else 'OLS'} trendline slope, mean ± std across samples)")
+plt.title(f"Trendline Slope vs POOL (boosting window) for various Aggregation Windows and Percentiles  \n(mean ± std across {n_samples} samples{title_note})")
 
 # Legend entries: one per aggregation window (color only), plus one per ref (black with correct linestyle)
 agg_handles = [
@@ -92,6 +100,6 @@ plt.legend(
 )
 
 plt.tight_layout()
-plt.show()
-path = 'scripts/synthetic_plots/figures/d_ex_count_per_pool_for_agg_and_perc.png'
+path = f'scripts/synthetic_plots/figures/d_ex_count_per_pool_for_agg_and_perc{suffix}.png'
 plt.savefig(path)
+plt.show()

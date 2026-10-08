@@ -31,8 +31,8 @@ y = vienna_subset['daily_max_2m_temperature'].values
 model = TemperatureModel()
 model.fit(y, with_autocorrelation=True)
 
-print('ar_innovation_std', model.model_params.ar_innovation_std)
-print('ar_rho', model.model_params.ar_rho)
+print('innovation_std', model.model_params.innovation_std)
+print('ar_coeffs', model.model_params.ar_coeffs)
 
 y_hat = model.generate(with_autocorrelation=True)
 
@@ -52,6 +52,6 @@ plot_y(y_hat, 'scripts/test_temperature_model.png')
 
 # ar_rho=0.5*(1+model.model_params.ar_rho)
 # print(ar_rho)
-y_hat = model.generate(with_autocorrelation=True, ar_rho=0.5)
+y_hat = model.generate(with_autocorrelation=True, ar_coeffs=[0.5])
 
 plot_y(y_hat, 'scripts/test_temperature_model_change_ar_rho.png')

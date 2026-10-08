@@ -5,10 +5,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Visualise thresholds
-reference_start = cftime.DatetimeNoLeap(1960,1,1)
-reference_end = cftime.DatetimeNoLeap(1989,12,31)
-analysis_start = cftime.DatetimeNoLeap(1990,1,1)
-analysis_end = cftime.DatetimeNoLeap(2019,12,31)
+reference_start = cftime.DatetimeNoLeap(1961,1,1)
+reference_end = cftime.DatetimeNoLeap(1990,12,31)
+analysis_start = cftime.DatetimeNoLeap(1991,1,1)
+analysis_end = cftime.DatetimeNoLeap(2020,12,31)
 
 aggregation_window = 1
 boosting_window = 1

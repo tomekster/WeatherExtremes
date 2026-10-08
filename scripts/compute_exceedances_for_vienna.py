@@ -6,11 +6,11 @@ vienna_subset = load_vienna_subset()
 
 # 1. Set periods and constants
 # reference_start = vienna_subset['time'].values[0]
-reference_start = cftime.DatetimeNoLeap(1960,1,1)
-reference_end = cftime.DatetimeNoLeap(1989,12,31)
-analysis_start = cftime.DatetimeNoLeap(1990,1,1)
+reference_start = cftime.DatetimeNoLeap(1961,1,1)
+reference_end = cftime.DatetimeNoLeap(1990,12,31)
+analysis_start = cftime.DatetimeNoLeap(1991,1,1)
 # reference_start = vienna_subset['time'].values[-1]
-analysis_end = cftime.DatetimeNoLeap(2019,12,31)
+analysis_end = cftime.DatetimeNoLeap(2020,12,31)
 
 aggregation_window = 3
 boosting_window = 3

@@ -4,8 +4,17 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy as np
 from matplotlib.lines import Line2D
+import argparse
 
-data_path = 'scripts/synthetic_plots/data/c_ex_count_per_perc_for_agg_and_ref/c_data.pkl'
+parser = argparse.ArgumentParser()
+parser.add_argument("--trend", choices=["ols", "theil-sen"], default="ols")
+parser.add_argument("--in-base-bootstrap", action="store_true")
+parser.add_argument("--boost", type=int, default=1)
+args = parser.parse_args()
+suffix = (("_zb" if args.in_base_bootstrap else "") + (f"_boost{args.boost}" if args.boost != 1 else "") + ("_ts" if args.trend == "theil-sen" else ""))
+title_note = (", in-base bootstrap" if args.in_base_bootstrap else "") + f", BOOST={args.boost}"
+
+data_path = f'scripts/synthetic_plots/data/c_ex_count_per_perc_for_agg_and_ref/c_data{suffix}.pkl'
 with open(data_path, "rb") as f:
     ex_lst = pickle.load(f)
 
@@ -24,8 +33,8 @@ agg_to_color = {
 }
 
 ref_linestyles = {
-    '1960-1989': 'solid',
-    '1990-2019': 'dashed',
+    '1961-1990': 'solid',
+    '1991-2020': 'dashed',
 }
 
 # Determine n_samples as the maximum sample_id + 1 found in ex_lst keys
@@ -66,8 +75,8 @@ for ref in refs:
             )
 
 plt.xlabel("Percentile")
-plt.ylabel("Slope a (trendline slope, mean ± std across samples)")
-plt.title(f"Trendline Slope vs Percentile for various Aggregation Windows and Reference Periods  \n(mean ± std across {n_samples} samples)")
+plt.ylabel(f"Slope a ({'Theil–Sen' if args.trend == 'theil-sen' else 'OLS'} trendline slope, mean ± std across samples)")
+plt.title(f"Trendline Slope vs Percentile for various Aggregation Windows and Reference Periods  \n(mean ± std across {n_samples} samples{title_note})")
 
 # Legend entries: one per aggregation window (color only), plus one per ref (black with correct linestyle)
 agg_handles = [
@@ -90,6 +99,6 @@ plt.legend(
 )
 
 plt.tight_layout()
-plt.show()
-path = 'scripts/synthetic_plots/figures/c_ex_count_per_perc_for_agg_and_ref.png'
+path = f'scripts/synthetic_plots/figures/c_ex_count_per_perc_for_agg_and_ref{suffix}.png'
 plt.savefig(path)
+plt.show()

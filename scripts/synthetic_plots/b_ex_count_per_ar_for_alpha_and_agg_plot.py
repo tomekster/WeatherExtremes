@@ -4,8 +4,17 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy as np
 from matplotlib.lines import Line2D
+import argparse
 
-data_path = 'scripts/synthetic_plots/data/b_ex_count_per_ar_for_alpha_and_agg/b_data.pkl'
+parser = argparse.ArgumentParser()
+parser.add_argument("--trend", choices=["ols", "theil-sen"], default="ols")
+parser.add_argument("--in-base-bootstrap", action="store_true")
+parser.add_argument("--boost", type=int, default=1)
+args = parser.parse_args()
+suffix = (("_zb" if args.in_base_bootstrap else "") + (f"_boost{args.boost}" if args.boost != 1 else "") + ("_ts" if args.trend == "theil-sen" else ""))
+title_note = (", in-base bootstrap" if args.in_base_bootstrap else "") + f", BOOST={args.boost}"
+
+data_path = f'scripts/synthetic_plots/data/b_ex_count_per_ar_for_alpha_and_agg/b_data{suffix}.pkl'
 with open(data_path, "rb") as f:
     ex_lst = pickle.load(f)
 
@@ -26,12 +35,14 @@ warming_trend_to_color = {
 # Populate aggregation_window_styles with a style for each aggregation window (for later use)
 aggregation_window_linestyles = {
     1: 'solid',
-    3: 'dashed',
+    3: (0, (5, 1)),          # densely dashed
     5: 'dashdot',
     9: (0, (3, 5, 1, 5)),    # custom dash pattern
-    15: (0, (1, 1)),         # densely dotted
+    15: 'dashed',
     31: 'dotted',
 }
+# Readable legend names for the custom (tuple) dash patterns
+linestyle_names = {3: 'densely dashed', 9: 'dash-dot-dot'}
 
 n_samples = -1 
 
@@ -71,8 +82,8 @@ for warming_trend in warming_trends:
             )
 
 plt.xlabel("rho (autocorrelation coefficient for AR(1))")
-plt.ylabel("Slope a (trendline slope, mean ± std across samples)")
-plt.title(f"Trendline Slope vs Rho for Various Warming Trends and Aggregation Windows \n(mean ± std across {n_samples} samples)")
+plt.ylabel(f"Slope a ({'Theil–Sen' if args.trend == 'theil-sen' else 'OLS'} trendline slope, mean ± std across samples)")
+plt.title(f"Trendline Slope vs Rho for Various Warming Trends and Aggregation Windows \n(mean ± std across {n_samples} samples{title_note})")
 
 # Legend handles: one per warming trend (for color), plus aggregation window style handles (black)
 warming_trend_handles = [
@@ -80,7 +91,7 @@ warming_trend_handles = [
     for w in warming_trends
 ]
 style_handles = [
-    Line2D([0], [0], color='black', linestyle=aggregation_window_linestyles[agg], lw=2, label=f"AGG={agg} ({aggregation_window_linestyles[agg]})")
+    Line2D([0], [0], color='black', linestyle=aggregation_window_linestyles[agg], lw=2, label=f"AGG={agg} ({linestyle_names.get(agg, aggregation_window_linestyles[agg])})")
     for agg in aggregation_windows
 ]
 
@@ -96,6 +107,6 @@ plt.legend(
 )
 
 plt.tight_layout()
-plt.show()
-path = 'scripts/synthetic_plots/figures/b_ex_count_per_ar_for_alpha_and_agg.png'
+path = f'scripts/synthetic_plots/figures/b_ex_count_per_ar_for_alpha_and_agg{suffix}.png'
 plt.savefig(path)
+plt.show()

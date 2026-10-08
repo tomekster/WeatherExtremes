@@ -1,18 +1,27 @@
 # d) beta as a function of POOL for different AGG and PERC —> should show that the sensitivity to POOL is not that dramatic
 
 from src.synthetic_vienna.temperature_model import TemperatureModel
-from src.synthetic_vienna.exceedances import ExceedancesCalculator, compute_trendline_per_year
+from src.synthetic_vienna.exceedances import ExceedancesCalculator, compute_trendline_per_year_linear, compute_trendline_per_year_theil_sen
 from scripts.load_vienna_data import load_vienna_subset
 import numpy as np
 import cftime
 import pickle
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--trend", choices=["ols", "theil-sen"], default="ols",
+                    help="theil-sen stores (ts_slope, ts_intercept, ols_slope, ols_intercept) in <name>_ts.pkl")
+parser.add_argument("--in-base-bootstrap", action="store_true",
+                    help="Zhang et al. (2005) bootstrap for analysis years inside the reference period")
+args = parser.parse_args()
+suffix = (("_zb" if args.in_base_bootstrap else "") + ("_ts" if args.trend == "theil-sen" else ""))
 
 VIENNA_STD = 4.564433741768569
 VIENNA_AR_INNOVATION_STD = 2.9136834469177537
 VIENNA_AR_RHO = 0.8289066046135836
 VIENNA_TREND = 0.027
 
-data_path = 'scripts/synthetic_plots/data/d_ex_count_per_pool_for_agg_and_perc/d_data.pkl'
+data_path = f'scripts/synthetic_plots/data/d_ex_count_per_pool_for_agg_and_perc/d_data{suffix}.pkl'
 
 vienna_subset = load_vienna_subset()
 y = vienna_subset['daily_max_2m_temperature'].values
@@ -20,9 +29,9 @@ y = vienna_subset['daily_max_2m_temperature'].values
 model = TemperatureModel()
 model.fit(y, with_autocorrelation=True)
 
-first_thirty = (cftime.DatetimeNoLeap(1960,1,1), cftime.DatetimeNoLeap(1989,12,31))
-second_thirty = (cftime.DatetimeNoLeap(1990,1,1), cftime.DatetimeNoLeap(2019,12,31))
-all_sixty = (cftime.DatetimeNoLeap(1960,1,1), cftime.DatetimeNoLeap(2019,12,31))
+first_thirty = (cftime.DatetimeNoLeap(1961,1,1), cftime.DatetimeNoLeap(1990,12,31))
+second_thirty = (cftime.DatetimeNoLeap(1991,1,1), cftime.DatetimeNoLeap(2020,12,31))
+all_sixty = (cftime.DatetimeNoLeap(1961,1,1), cftime.DatetimeNoLeap(2020,12,31))
 
 aggregation_window = 1
 boosting_window = 1
@@ -45,15 +54,20 @@ for sample_id in range(n_samples):
             
                 exceedances = ec.compute_exceedances(
                     data=data, 
-                    percentile=percentile, 
-                    boosting_window=boosting_window,
+                    percentile=perc,
+                    boosting_window=boost,
                     aggregation_window=aggregation_window,
                     agg_method=aggregation_method,
                     reference_window=first_thirty,
-                    analysis_window=all_sixty
+                    analysis_window=all_sixty,
+                    in_base_bootstrap=args.in_base_bootstrap
                     )
-                slope, intercept = compute_trendline_per_year(exceedances)
-                ex_lst[(boost, aggregation_window, perc, sample_id) ] = (slope,intercept)
+                slope, intercept = compute_trendline_per_year_linear(exceedances)
+                if args.trend == "theil-sen":
+                    ts_slope, ts_intercept = compute_trendline_per_year_theil_sen(exceedances)
+                    ex_lst[(boost, aggregation_window, perc, sample_id) ] = (ts_slope, ts_intercept, slope, intercept)
+                else:
+                    ex_lst[(boost, aggregation_window, perc, sample_id) ] = (slope,intercept)
 
 with open(data_path, "wb") as f:
     pickle.dump(ex_lst, f)

@@ -1,5 +1,5 @@
 from scripts.load_vienna_data import load_vienna_subset
-from src.synthetic_vienna.exceedances import ExceedancesCalculator, compute_trendline_per_year, count_exceedances_per_year
+from src.synthetic_vienna.exceedances import ExceedancesCalculator, compute_trendline_per_year_linear, count_exceedances_per_year
 from src.synthetic_vienna.temperature_model import TemperatureModel
 import numpy as np 
 import matplotlib.pyplot as plt
@@ -50,9 +50,9 @@ def plot_fitted_trendline(temp_data, path="scripts/synthetic_plots/vis_inspect_i
     axs[0].plot(max2mtemp, label="Raw Data", alpha=0.7, linewidth=1)
     ec = ExceedancesCalculator()
     
-    first_thirty = (cftime.DatetimeNoLeap(1960,1,1), cftime.DatetimeNoLeap(1989,12,31))
-    second_thirty = (cftime.DatetimeNoLeap(1990,1,1), cftime.DatetimeNoLeap(2019,12,31))
-    all_sixty = (cftime.DatetimeNoLeap(1960,1,1), cftime.DatetimeNoLeap(2019,12,31))
+    first_thirty = (cftime.DatetimeNoLeap(1961,1,1), cftime.DatetimeNoLeap(1990,12,31))
+    second_thirty = (cftime.DatetimeNoLeap(1991,1,1), cftime.DatetimeNoLeap(2020,12,31))
+    all_sixty = (cftime.DatetimeNoLeap(1961,1,1), cftime.DatetimeNoLeap(2020,12,31))
 
     aggregation_window = 1
     boosting_window = 1
@@ -72,7 +72,7 @@ def plot_fitted_trendline(temp_data, path="scripts/synthetic_plots/vis_inspect_i
         )
     
     exceedances_per_year = count_exceedances_per_year(ec.exceedances)
-    slope, intercept = compute_trendline_per_year(ec.exceedances)
+    slope, intercept = compute_trendline_per_year_linear(ec.exceedances)
 
     axs[1].plot(exceedances_per_year, label="Exceedances per year", marker='o')
     # Plot the fitted trendline
