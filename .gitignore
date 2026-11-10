@@ -9,3 +9,10 @@ data/*
 *.png
 *.npy
 test_ftp.py
+
+scripts/synthetic_plots/data/
+scripts/synthetic_plots/figures/
+scripts/synthetic_plots/vis_intermediate_results
+figures
+group_files
+share_tomasz

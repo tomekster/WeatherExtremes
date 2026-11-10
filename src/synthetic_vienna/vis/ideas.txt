@@ -1,0 +1,7 @@
+1. Single plot showing different percentile lines (thresholds) for every doy
+    - for different aggregations
+    - for different boosting widnows
+
+2. Single plot showing the "buckets"/"box counts" of how many days (and how far) were above/below the thresholds
+
+3. 

@@ -218,6 +218,9 @@ def parse_args() -> argparse.Namespace:
                    help="One or more reference periods as pairs: start1 end1 start2 end2 …")
     p.add_argument("--location",     type=str,   default=None,
                    help="Process only this location name (default: all locations)")
+    p.add_argument("--agg-method",  type=str,   default="max",
+                   choices=["max", "mean", "min", "sum"],
+                   help="Rolling-window aggregation method (default: max)")
     return p.parse_args()
 
 
@@ -232,7 +235,7 @@ def main() -> None:
     OUTPUT_ZARR = args.output
     AGG_WINDOWS = args.agg_windows   # list[int]
     PERC_BOOSTS = args.perc_boosts   # list[int]
-    AGG_METHOD  = AggMethod.MAX
+    AGG_METHOD  = AggMethod(args.agg_method.lower())
     PERCENTILE  = args.percentile
 
     raw_rp = args.ref_periods

@@ -24,14 +24,23 @@ In both modes synthetic daily series for 1950–2020 are produced as:
 
 where Y = year − 1950 (Y=0 for 1950) and ε is the noise term.
 
-By default (--autocorr 0.0) ε ~ i.i.d. N(0, sigma²).
+By default (--autocorr 0.0, --variance-trend 0.0) ε ~ i.i.d. N(0, sigma²).
 
-With --autocorr φ (φ ∈ (-1, 1), φ ≠ 0) ε follows an AR(1) process:
+With --autocorr φ (φ ∈ (-1, 1), φ ≠ 0) ε follows an AR(1) process with
+unit variance, then scaled by sigma:
 
-    ε_t = φ · ε_{t-1} + √(1 − φ²) · sigma · w_t,   w_t ~ i.i.d. N(0,1)
+    z_t = φ · z_{t-1} + √(1 − φ²) · w_t,   w_t ~ i.i.d. N(0,1)
+    ε_t = sigma · z_t
 
-The marginal variance is sigma² regardless of φ, so the variance parameter
-retains the same interpretation as in the i.i.d. case.
+The marginal variance of ε is sigma² regardless of φ.
+
+With --variance-trend k > 0 the noise variance increases linearly with year:
+
+    σ²(Y) = sigma² + k · Y
+
+so sigma(t) = sqrt(max(0, sigma² + k·Y(t))).  This is applied on top of
+either noise model:  ε_t = sigma(Y(t)) · z_t where z_t is either i.i.d.
+N(0,1) or unit-variance AR(1).
 
 5 slope values and 5 variance values are combined (25 realisations per location).
 A fixed random seed ensures reproducibility.
@@ -46,6 +55,10 @@ Usage
 
     # Sine-wave mode
     python src/generate_synthetic_t2max.py --mode sine --amplitude 15 --mean-temp 10
+
+    # With AR(1) autocorrelation and increasing variance
+    python src/generate_synthetic_t2max.py --mode sine --amplitude 15 --mean-temp 10 \\
+        --autocorr 0.7 --variance-trend 0.02
 
     # Override output path
     python src/generate_synthetic_t2max.py --mode sine --amplitude 15 --mean-temp 10 \\
@@ -104,38 +117,51 @@ def generate_series(
     sigma: float,
     rng: np.random.Generator,
     autocorr: float = 0.0,
+    variance_trend: float = 0.0,
 ) -> np.ndarray:
     """
     Build a synthetic daily series for a single (slope, sigma) combination.
 
     T(t) = clim[doy(t)-1]  +  slope * (year(t) - 1950)  +  ε(t)
 
-    When autocorr == 0.0 (default):
-        ε(t) ~ i.i.d. N(0, sigma²)
+    Noise model
+    -----------
+    A unit-variance base process z(t) is generated first:
+      - autocorr == 0.0: z(t) ~ i.i.d. N(0, 1)
+      - autocorr != 0.0: z(t) = autocorr*z(t-1) + sqrt(1-autocorr²)*w(t),
+                                 w(t) ~ i.i.d. N(0,1)  [unit-variance AR(1)]
 
-    When autocorr != 0.0, ε follows an AR(1) process:
-        ε(t) = autocorr * ε(t-1)  +  √(1 - autocorr²) * sigma * w(t)
-        w(t) ~ i.i.d. N(0, 1)
-    The marginal variance is sigma² regardless of autocorr.
-    autocorr must be in (-1, 1).
+    The noise is then scaled by a (possibly time-varying) sigma:
+      - variance_trend == 0.0: σ(t) = sigma  (constant)
+      - variance_trend != 0.0: σ²(Y) = sigma² + variance_trend * Y
+                                where Y = year(t) - 1950
+
+    ε(t) = sigma(t) * z(t)
     """
     n     = len(times)
     years = times.year.to_numpy()
     doys  = times.dayofyear.to_numpy()   # 1-based
     trend = slope * (years - 1950).astype(np.float32)
 
-    if autocorr == 0.0:
-        noise = rng.normal(0.0, sigma, size=n).astype(np.float32)
+    # Per-day sigma: constant or linearly increasing variance
+    if variance_trend != 0.0:
+        Y = (years - 1950).astype(np.float64)
+        sigma_t = np.sqrt(np.maximum(0.0, sigma ** 2 + variance_trend * Y)).astype(np.float32)
     else:
-        innov_std  = sigma * np.sqrt(max(0.0, 1.0 - autocorr ** 2))
-        innovations = rng.normal(0.0, innov_std, size=n)
-        noise = np.empty(n, dtype=np.float64)
-        # Draw initial condition from the stationary distribution N(0, sigma²)
-        noise[0] = rng.normal(0.0, sigma)
-        for i in range(1, n):
-            noise[i] = autocorr * noise[i - 1] + innovations[i]
-        noise = noise.astype(np.float32)
+        sigma_t = np.full(n, sigma, dtype=np.float32)
 
+    # Unit-variance base process
+    if autocorr == 0.0:
+        z = rng.normal(0.0, 1.0, size=n)
+    else:
+        innov_std   = np.sqrt(max(0.0, 1.0 - autocorr ** 2))
+        innovations = rng.normal(0.0, innov_std, size=n)
+        z = np.empty(n, dtype=np.float64)
+        z[0] = rng.normal(0.0, 1.0)   # initial condition from stationary dist
+        for i in range(1, n):
+            z[i] = autocorr * z[i - 1] + innovations[i]
+
+    noise = (z * sigma_t).astype(np.float32)
     return clim[doys - 1] + trend + noise
 
 
@@ -198,6 +224,19 @@ def write_zarr(
 
 
 # ---------------------------------------------------------------------------
+# Shared helper
+# ---------------------------------------------------------------------------
+
+def _noise_desc(autocorr: float, variance_trend: float) -> str:
+    """Human-readable description of the noise model for logging / zarr attrs."""
+    parts = []
+    parts.append(f"AR(1) noise, φ={autocorr}" if autocorr != 0.0 else "i.i.d. Gaussian noise")
+    if variance_trend != 0.0:
+        parts.append(f"increasing variance (k={variance_trend} °C²/yr)")
+    return ", ".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # ERA5 mode
 # ---------------------------------------------------------------------------
 
@@ -229,7 +268,8 @@ def compute_climatology(da: xr.DataArray) -> np.ndarray:
     return full   # shape (366,), 0-indexed by doy-1
 
 
-def run_era5(output_path: str, autocorr: float = 0.0) -> None:
+def run_era5(output_path: str, autocorr: float = 0.0,
+             variance_trend: float = 0.0, seed: int = RANDOM_SEED) -> None:
     print(f"Opening {INPUT_ZARR} ...")
     ds = xr.open_zarr(INPUT_ZARR, consolidated=False)
 
@@ -250,17 +290,18 @@ def run_era5(output_path: str, autocorr: float = 0.0) -> None:
         clims[i] = compute_climatology(da)
 
     # Step 2 – generate synthetic series
-    noise_desc = f"AR(1) noise, φ={autocorr}" if autocorr != 0.0 else "i.i.d. Gaussian noise"
+    noise_desc = _noise_desc(autocorr, variance_trend)
     print(f"Generating synthetic time series ({noise_desc}) ...")
     data = np.empty((n_sl, n_var, n_loc, n_t), dtype=np.float32)
-    rng  = np.random.default_rng(RANDOM_SEED)
+    rng  = np.random.default_rng(seed)
 
     for si, slope in enumerate(SLOPES):
         for vi, variance in enumerate(VARIANCES):
             sigma = float(np.sqrt(variance))
             for li in range(n_loc):
                 data[si, vi, li, :] = generate_series(
-                    clims[li], times, slope, sigma, rng, autocorr=autocorr
+                    clims[li], times, slope, sigma, rng,
+                    autocorr=autocorr, variance_trend=variance_trend,
                 )
             print(f"  slope={slope:.2f} °C/yr  variance={variance:.2f} °C²  done")
 
@@ -273,8 +314,10 @@ def run_era5(output_path: str, autocorr: float = 0.0) -> None:
                 "Reference climatology averaged from ERA5 rechunked t2max over 1950-1959. "
                 f"Synthetic series: T(t) = clim[doy] + slope*(year-1950) + noise ({noise_desc})."
             ),
-            "source_zarr": INPUT_ZARR,
-            "autocorr": autocorr,
+            "source_zarr":    INPUT_ZARR,
+            "autocorr":       autocorr,
+            "variance_trend": variance_trend,
+            "random_seed":    seed,
         },
     )
 
@@ -304,7 +347,8 @@ def build_sine_climatology(amplitude: float, mean_temp: float) -> np.ndarray:
 
 
 def run_sine(amplitude: float, mean_temp: float, output_path: str,
-             autocorr: float = 0.0) -> None:
+             autocorr: float = 0.0, variance_trend: float = 0.0,
+             seed: int = RANDOM_SEED) -> None:
     print(
         f"Sine-wave mode: amplitude={amplitude} °C, mean_temp={mean_temp} °C\n"
         f"  T_ref(doy) = {mean_temp} + {amplitude}*cos(2π*(doy-{DOY_SUMMER_MAX})/365)\n"
@@ -325,16 +369,17 @@ def run_sine(amplitude: float, mean_temp: float, output_path: str,
     clim  = build_sine_climatology(amplitude, mean_temp)   # (366,)
     clims = clim[np.newaxis, :]                            # (1, 366)
 
-    noise_desc = f"AR(1) noise, φ={autocorr}" if autocorr != 0.0 else "i.i.d. Gaussian noise"
+    noise_desc = _noise_desc(autocorr, variance_trend)
     print(f"Generating synthetic time series ({noise_desc}) ...")
     data = np.empty((n_sl, n_var, n_loc, n_t), dtype=np.float32)
-    rng  = np.random.default_rng(RANDOM_SEED)
+    rng  = np.random.default_rng(seed)
 
     for si, slope in enumerate(SLOPES):
         for vi, variance in enumerate(VARIANCES):
             sigma = float(np.sqrt(variance))
             data[si, vi, 0, :] = generate_series(
-                clim, times, slope, sigma, rng, autocorr=autocorr
+                clim, times, slope, sigma, rng,
+                autocorr=autocorr, variance_trend=variance_trend,
             )
             print(f"  slope={slope:.2f} °C/yr  variance={variance:.2f} °C²  done")
 
@@ -352,6 +397,8 @@ def run_sine(amplitude: float, mean_temp: float, output_path: str,
             "sine_doy_max":    DOY_SUMMER_MAX,
             "sine_doy_min":    DOY_WINTER_MIN,
             "autocorr":        autocorr,
+            "variance_trend":  variance_trend,
+            "random_seed":     seed,
         },
     )
 
@@ -388,6 +435,17 @@ def parse_args() -> argparse.Namespace:
         help="Lag-1 autocorrelation φ for AR(1) noise, in (-1, 1). "
              "0.0 (default) = independent i.i.d. Gaussian noise.",
     )
+    p.add_argument(
+        "--variance-trend", type=float, default=0.0,
+        dest="variance_trend",
+        help="Annual increase in noise variance k [°C²/yr] for the model "
+             "σ²(Y) = σ_base² + k·Y where Y = year-1950. "
+             "0.0 (default) = constant variance.",
+    )
+    p.add_argument(
+        "--seed", type=int, default=RANDOM_SEED,
+        help=f"Random seed for reproducibility (default: {RANDOM_SEED}).",
+    )
     return p.parse_args()
 
 
@@ -398,18 +456,32 @@ def main() -> None:
         raise SystemExit(
             f"error: --autocorr must be in (-1, 1), got {args.autocorr}"
         )
+    if args.variance_trend < 0.0:
+        raise SystemExit(
+            f"error: --variance-trend must be >= 0, got {args.variance_trend}"
+        )
 
     if args.mode == "sine":
         if args.amplitude is None or args.mean_temp is None:
             raise SystemExit(
                 "error: --amplitude and --mean-temp are required for --mode sine"
             )
-        output = args.output or "data/synthetic/synthetic_t2max_sine.zarr"
-        run_sine(args.amplitude, args.mean_temp, output, autocorr=args.autocorr)
+        if args.output:
+            output = args.output
+        else:
+            # Embed noise-model parameters in the default filename so successive
+            # invocations with different settings don't overwrite each other.
+            ar_tag = f"ar{args.autocorr}".replace(".", "")
+            vt_tag = f"vt{args.variance_trend}".replace(".", "")
+            output = f"data/synthetic/synthetic_t2max_sine_{ar_tag}_{vt_tag}.zarr"
+        run_sine(args.amplitude, args.mean_temp, output,
+                 autocorr=args.autocorr, variance_trend=args.variance_trend,
+                 seed=args.seed)
 
     else:  # era5
         output = args.output or "data/synthetic/synthetic_t2max.zarr"
-        run_era5(output, autocorr=args.autocorr)
+        run_era5(output, autocorr=args.autocorr, variance_trend=args.variance_trend,
+                 seed=args.seed)
 
 
 if __name__ == "__main__":

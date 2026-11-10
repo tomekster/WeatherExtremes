@@ -25,12 +25,17 @@ def ensure_dimensions(data):
 
     return data
         
-def lat_lon_to_grid_index(lat, lon, data):
+def lat_lon_to_grid_index2(lat, lon, data):
     # Use xarray's "nearest" method to find the closest latitude and longitude indices
     nearest = data.sel(latitude=lat, longitude=lon, method="nearest")
     # Find the integer indices by searching for the position in the coordinate arrays
     lat_idx = int((data.latitude.values == nearest.latitude.values).nonzero()[0][0])
     lon_idx = int((data.longitude.values == nearest.longitude.values).nonzero()[0][0])
+    return lat_idx, lon_idx
+
+def lat_lon_to_grid_index(lat, lon):
+    lat_idx = round(360 + 4*lat)
+    lon_idx = round(720 + 4*lon)
     return lat_idx, lon_idx
     
 # print(grid_index_to_lat_long(334,576))

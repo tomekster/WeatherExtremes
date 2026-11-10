@@ -133,7 +133,7 @@ def fig_location(inupt_zarr_path: str, d: dict, loc_idx: int, season: str, out_p
     if season == "annual":
         y_max = int(np.max(counts)) + 1
     else:
-        y_max = 90
+        y_max = 100
 
     fig, axes = plt.subplots(
         n_rows, n_cols,
