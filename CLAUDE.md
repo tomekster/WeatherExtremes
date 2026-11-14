@@ -122,6 +122,24 @@ python -m scripts.synthetic_plots.a_ex_count_per_warm_trend_and_ref_collect_data
 python -m scripts.synthetic_plots.a_ex_count_per_warm_trend_and_ref_plot
 ```
 
+### Paper draft (`Extreme-frequency-trends/` git submodule)
+
+The paper lives in the git submodule `Extreme-frequency-trends/`, which points to `github.com/tomekster/Extreme-frequency-trends`. That GitHub repo is linked to the Overleaf project through Overleaf's GitHub sync. Overleaf is the main place where the text is edited. Changes reach GitHub only when someone pushes from Overleaf (Menu → GitHub), and edits pushed to GitHub reach Overleaf only when someone pulls them in Overleaf. To edit the paper from here:
+
+```bash
+git submodule update --init            # first time; then work inside Extreme-frequency-trends/
+cd Extreme-frequency-trends && git pull origin main   # get the latest Overleaf push first
+# edit, commit and push inside the submodule, then bump the submodule pointer in this repo
+```
+Keep edits small and pull first, because Overleaf and GitHub edits to the same lines conflict. The submodule pointer in this repo goes stale whenever the paper moves on, so read the submodule's own `main` branch rather than trusting the pinned commit. An untracked `main.tex` in the repo root of some local checkouts is an old copy: ignore it.
+
+- **Paper:** "How reliably can we estimate linear trends of surface weather extreme frequencies?" by Sternal, Voigt, Sprenger, Hoefler and Wernli (ETH Zurich). It targets *Geophysical Research Letters* and uses the AGU class `agujournal2019.cls`.
+- **Build:** `latexmk -pdf main.tex` (pdflatex + bibtex, bibliography `ref.bib`). `table_trend_settings.tex` is `\input` at the end of the appendix and needs `rotating` + `threeparttable`. `SI.tex` (`agutexSI2019.cls`) is still the unedited AGU template. `trackchanges.sty` is bundled.
+- **Conventions:** `\todo{...}` (defined in the preamble) prints red "TODO:" text and marks open work, and there are many of them. Notes addressed to a person start with their name, e.g. `\todo{Tomasz: ...}`. Line numbers come from `lineno`, with equations wrapped in `linenomath*`. Figures are in `figures/` (some subfolders: `cities/`, `global_trends/`, `surfaces/`), and every float has a `fig:`/`tab:` label.
+- **Structure:** `main.tex` holds only the preamble, front/back matter (statements, acknowledgments, bibliography) and AGU template comments; each section lives in `sections/` and is pulled in with `\input` (`00_abstract`, `01_plain_language_summary`, `02_introduction`, `03_data_and_methods`, `04_era5_trends`, `05_synthetic_experiments`, `06_conclusions`, `A_maximal_trend_differences`), so edit section text there. Contents: Plain Language Summary; 1 Introduction; 2 Data and methods (`sec:data`; 2.1 time-series decomposition `sec:concept` with the model table `tab:temperature_models`; 2.2 extreme identification `sec:identification` with `tab:extreme_parameters`); 3 ERA5 results (`sec:era5`: global baseline trend maps, one-parameter-change panels, the POOL-pairing analysis for Vienna/Lagos/Europe, Vienna REF×PERC time series); 4 Synthetic experiments (`sec:synth`: model, fit, generation, identification with in-base bootstrap and seasonal-cycle removal, β and its Gaussian approximation, sweeps (a)–(d), results, limitations); 5 Conclusions (`sec:conc`); appendix A with global per-configuration trend maps, then the literature-settings table.
+- **Notation (paper ↔ code):** a setting is written χ{TYPE, AGG, SEAS, PERC, REF, POOL}. AGG is the rolling aggregation window (`agg_window`), POOL is the per-DOY pooling window (`perc_boost`), PERC is the percentile (`percentile`, e.g. 90 ↔ 0.90), and REF is the reference period (`ref_start`/`ref_end`). The analysis period for synthetic runs is 1961–2020. β is the trend in yearly extreme counts in extremes per decade. In the temperature model, α is the warming rate (`warming_rate`), σ is the noise std (`std`) and ρ is the lag-1 autocorrelation (`ar_coeffs`). "Seasonal mean removed" is `subtract_seasonal_cycle=True` (Brunner & Voigt 2024), and "in-base bootstrap" is `in_base_bootstrap=True` (Zhang et al. 2005).
+- **Figure sources:** `figures/fig_synth.pdf` combines panels (a)–(d) from `scripts/synthetic_plots/{a,b,c,d}_*_plot.py`, with REF 1961–1990 solid and 1991–2020 dash-dotted. The ERA5 maps, city/Europe POOL-pairing figures and global per-configuration maps were made with analysis scripts that are not in this repo.
+
 ### Data sources
 
 - ERA5 data originates from WeatherBench2 on GCS (`gs://weatherbench2/datasets/era5/...`)
